@@ -11,14 +11,17 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def _import_class(module_and_class_name: str) -> type: 
     """Import class from a module, e.g. 'text_recognizer.models.MLP'"""
+    print("Inside _import_class")
     module_name, class_name = module_and_class_name.rsplit(".", 1)
     module = importlib.import_module(module_name)
     class_ = getattr(module, class_name)
+    print("Exiting _import_class")
     return class_
 
 
 def _setup_parser():
     """Set up Python's ArgumentParser with data, model, trainer, and other arguments."""
+    print("Inside _setup_parser")
     parser = argparse.ArgumentParser(add_help=False)
 
     # Add Trainer specific arguments, such as --max_epochs, --gpus, --precision
@@ -54,10 +57,12 @@ def _setup_parser():
     lit_model_class.add_to_argparse(lit_model_group)
 
     parser.add_argument("--help", "-h", action="help")
+    print("Exiting _setup_parser")
     return parser
 
 
 def main():
+    print("Inside main")
     parser = _setup_parser()
     args = parser.parse_args()
     print(args)
@@ -142,6 +147,7 @@ def main():
     if "EntityEmbedding" not in lit_model.__class__.__name__:
         print("*path"*30)
         print(path)
+    print("Exiting main")
 
 
 

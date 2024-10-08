@@ -96,7 +96,7 @@ class DataCollatorForSeq2Seq:
     entity_img_files: Optional[Any] = None
 
     def __call__(self, features, return_tensors=None):
-
+        print("Inside __call__ function of DataCollatorForSeq2Seq")
         if return_tensors is None:
             return_tensors = self.return_tensors
         labels = [feature.pop("labels") for feature in features] if "labels" in features[0].keys() else None
@@ -183,11 +183,13 @@ class DataCollatorForSeq2Seq:
         features['aux_values'] = torch.stack(aux_images)
         features['rcnn_values'] = torch.stack(rcnn_images)
         #endregion
+        print("Exiting __call__ function of DataCollatorForSeq2Seq")
         return features
 
 
 class KGC(BaseDataModule):
     def __init__(self, args, model) -> None:
+        print("Initialising KGC class")
         super().__init__(args)
         self.tokenizer = AutoTokenizer.from_pretrained(self.args.model_name_or_path, use_fast=False)
         self.processor = KGProcessor(self.tokenizer, args)
@@ -223,6 +225,7 @@ class KGC(BaseDataModule):
 
 
     def setup(self, stage=None):
+        print("Assigning variables in setup function of KGC")
         self.data_train = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "train")
         self.data_val = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "dev")
         self.data_test = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "test")
@@ -231,15 +234,17 @@ class KGC(BaseDataModule):
         pass
 
     def get_config(self):
+        print("Inside get_config of KGC")
         d = {}
         for k, v in self.__dict__.items():
             if "st" in k or "ed" in k:
                 d.update({k:v})
-        
+        print("Exciting get_config of KGC")
         return d
 
     @staticmethod
     def add_to_argparse(parser):
+        print("Inside add_to_argparse function KGC class")
         BaseDataModule.add_to_argparse(parser)
         parser.add_argument("--model_name_or_path", type=str, default="roberta-base", help="the name or the path to the pretrained model")
         parser.add_argument("--data_dir", type=str, default="roberta-base", help="the name or the path to the pretrained model")
@@ -247,17 +252,22 @@ class KGC(BaseDataModule):
         parser.add_argument("--warm_up_radio", type=float, default=0.1, help="Number of examples to operate on per forward step.")
         parser.add_argument("--eval_batch_size", type=int, default=8)
         parser.add_argument("--overwrite_cache", action="store_true", default=False)
+        print("Exciting add_to_argparse function KGC class")
         return parser
 
     def get_tokenizer(self):
+        print("Returning get_tokenizer KGC class")
         return self.tokenizer
 
     def train_dataloader(self):
+        print("Inside train_dataloader KGC class")
         return DataLoader(self.data_train, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.batch_size, shuffle=self.args.pretrain)
 
     def val_dataloader(self):
+        print("Inside val_dataloader KGC class")
         return DataLoader(self.data_val, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
 
     def test_dataloader(self):
+        print("Inside test_dataloader KGC class")
         return DataLoader(self.data_test, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
 
