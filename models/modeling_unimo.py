@@ -318,7 +318,7 @@ class CLIPMLP(nn.Module):
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
     def forward(self, hidden_states):
-        print("Executing forward of CLIPMLP class of modellingclip.py")
+        print("Executing forward of CLIPMLP class of modelling_unimo.py")
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
         hidden_states = self.fc2(hidden_states)
@@ -327,7 +327,7 @@ class CLIPMLP(nn.Module):
 
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
-        print("Initializing BertSelfAttention of modellingclip.py")
+        print("Initializing BertSelfAttention of modelling_unimo.py")
         super().__init__()
         self.num_attention_heads = config.num_attention_heads   # 12
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads) # 64
@@ -341,7 +341,7 @@ class BertSelfAttention(nn.Module):
         self.fusion = BertFusion(config)    # 
 
     def transpose_for_scores(self, x):
-        print("Executing transpose_for_scores of BertSelfAttention of modellingclip.py")
+        print("Executing transpose_for_scores of BertSelfAttention of modelling_unimo.py")
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
@@ -356,7 +356,7 @@ class BertSelfAttention(nn.Module):
         output_qks=None,
     ):
         mixed_query_layer = self.query(hidden_states)
-        print("Inside forward of BertSelfAttention of modelling_clip.py")
+        print("Inside forward of BertSelfAttention of modelling_unimo.py")
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
@@ -391,7 +391,7 @@ class BertSelfAttention(nn.Module):
         fusion_output = self.fusion(context_layer, visual_hidden_state) if visual_hidden_state is not None else None # add
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-        print("Exiting forward of BertSelfAttention of modelling_clip.py")
+        print("Exiting forward of BertSelfAttention of modelling_unimo.py")
         return outputs, fusion_output, qks
 
 
@@ -709,7 +709,7 @@ class BertPooler(nn.Module):
 
 class UnimoModel(nn.Module):
     def __init__(self, vision_config, text_config, add_pooling_layer=True):
-        print("Initializng UnimoModel of modelling_clip.py")
+        print("Initializng UnimoModel of modelling_unimo.py")
         super(UnimoModel, self).__init__()
         # vision model
         self.vision_config = vision_config
