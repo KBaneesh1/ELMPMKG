@@ -90,12 +90,15 @@ def solve(line,  set_type="train", pretrain=1):
     head_ent_text = ent2text[line[0]]
     tail_ent_text = ent2text[line[2]]
     relation_text = rel2text[line[1]]
-    
+    print("head ent text", head_ent_text)
+    print("tail ent text", tail_ent_text)
+    print("relation text", relation_text)
     i=0
     
     a = tail_filter_entities["\t".join([line[0],line[1]])]
     b = head_filter_entities["\t".join([line[2],line[1]])]
-    
+    print("a", a)
+    print("b", b)
     guid = "%s-%s" % (set_type, i)
     text_a = head_ent_text
     text_b = relation_text
@@ -109,6 +112,7 @@ def solve(line,  set_type="train", pretrain=1):
             InputExample(guid=guid, text_a="[MASK]", text_b=text_b + "[PAD]", text_c = "[UNK]" + " " + text_c, label=lmap(lambda x: ent2id[x], b), real_label=ent2id[line[0]], en=ent2id[line[2]], rel=rel2id[line[1]], entity=line[2]))
         examples.append(
             InputExample(guid=guid, text_a="[UNK] ", text_b=text_b + "[PAD]", text_c = "[MASK]" + text_a, label=lmap(lambda x: ent2id[x], a), real_label=ent2id[line[2]], en=ent2id[line[0]], rel=rel2id[line[1]], entity=line[0]))     
+    print("Examples", examples)
     print("Exiting solve function of processor.py")  
     return examples
 
@@ -280,6 +284,9 @@ class InputExample(object):
         self.en = en
         self.rel = rel # rel id
         self.entity = entity
+        print("text_a", text_a)
+        print("text_b", text_b)
+        print("text_c", text_c)
 
 
 @dataclass
@@ -617,6 +624,7 @@ class MultiprocessingEncoder(object):
             # the des of xxx is [MASK] .
             # xxx is the description of [MASK].
             input_text = f"The description of {text_a} is that {text_b} ."
+            print("input text", input_text)
             inputs = bpe(
                 input_text,
                 truncation="longest_first",
@@ -631,7 +639,9 @@ class MultiprocessingEncoder(object):
             else:
                 input_text_a = text_a
                 input_text_b = bpe.sep_token.join([text_b, text_c])
-        
+
+            print("Input text a", input_text_a)
+            print("Input text b", input_text_b)
             inputs = bpe(
                 input_text_a,
                 input_text_b,

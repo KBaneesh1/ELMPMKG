@@ -71,11 +71,14 @@ def main():
     torch.manual_seed(args.seed)
     pl.seed_everything(args.seed)
 
+    print("Importing classes")
     data_class = _import_class(f"data.{args.data_class}")               # Dataset
     model_class = _import_class(f"models.{args.model_class}")           # Model
     litmodel_class = _import_class(f"lit_models.{args.litmodel_class}") # Lit_model
+    print("Done importing Classes")
 
     # load pretrained visual and textual configs, models
+    print("Loading pre-trained models")
     vision_config = CLIPConfig.from_pretrained('openai/clip-vit-base-patch32').vision_config
     text_config = BertConfig.from_pretrained('bert-base-uncased')
     bert = BertModel.from_pretrained('bert-base-uncased')
@@ -86,6 +89,7 @@ def main():
     model = model_class(vision_config, text_config)
     clip_model_dict = clip_vit.state_dict()
     text_model_dict = bert.state_dict()
+    print("Done loading pretrained models")
 
     def load_state_dict():
         """Load bert and vit pretrained weights"""
@@ -111,9 +115,12 @@ def main():
     data = data_class(args, model)
     tokenizer = data.tokenizer
 
+    print("Initializing lit model class")
     lit_model = litmodel_class(args=args, model=model, tokenizer=tokenizer, data_config=data.get_config())
     if args.checkpoint:
         lit_model.load_state_dict(torch.load(args.checkpoint, map_location="cpu")["state_dict"])
+    print("Done initializing lit model class")
+
 
     logger = pl.loggers.TensorBoardLogger("training/logs")
     if args.wandb:
@@ -130,12 +137,15 @@ def main():
     )
     callbacks = [early_callback, model_checkpoint]
 
+    print("Initializing trainer")
     trainer = pl.Trainer.from_argparse_args(args, 
                                             callbacks=callbacks, 
                                             logger=logger, 
                                             default_root_dir="training/logs",)
-    
+    print("Done Initializing trainer")
+
     if "EntityEmbedding" not in lit_model.__class__.__name__:
+        print("Starting training")
         trainer.fit(lit_model, datamodule=data)
         path = model_checkpoint.best_model_path
         lit_model.load_state_dict(torch.load(path)["state_dict"])
