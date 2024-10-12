@@ -624,6 +624,7 @@ class MultiprocessingEncoder(object):
             # the des of xxx is [MASK] .
             # xxx is the description of [MASK].
             input_text = f"The description of {text_a} is that {text_b} ."
+            input_text = input_text.encode('utf-8', 'ignore').decode('utf-8')
             print("input text", input_text)
             inputs = bpe(
                 input_text,
@@ -640,7 +641,9 @@ class MultiprocessingEncoder(object):
                 input_text_a = text_a
                 input_text_b = bpe.sep_token.join([text_b, text_c])
 
+            input_text_a = input_text_a.encode('utf-8', 'ignore').decode('utf-8')
             print("Input text a", input_text_a)
+            input_text_b = input_text_b.encode('utf-8', 'ignore').decode('utf-8')
             print("Input text b", input_text_b)
             inputs = bpe(
                 input_text_a,
