@@ -155,22 +155,31 @@ class DataCollatorForSeq2Seq:
             en_rcnn_imgs = en_imgs[4:]
 
             if len(en_full_imgs) > 0:
-                full_img = Image.open(en_full_imgs[0]).convert('RGB')
-                full_img = clip_processor(images=full_img, return_tensors='pt')['pixel_values'].squeeze()
-                pixel_images.append(full_img)
+                try:
+                    full_img = Image.open(en_full_imgs[0]).convert('RGB')
+                    full_img = clip_processor(images=full_img, return_tensors='pt')['pixel_values'].squeeze()
+                    pixel_images.append(full_img)
+                except:
+                    pass
             else:
                 pixel_images.append(torch.zeros((3, 224, 224)))
 
             aux_imgs, rcnn_imgs = [], []
             # select 3 imgs
             for i in range(min(3, len(en_aux_imgs))):
-                aux_img = Image.open(en_aux_imgs[i]).convert('RGB')
-                aux_img = aux_processor(images=aux_img, return_tensors='pt')['pixel_values'].squeeze()
-                aux_imgs.append(aux_img)
+                try:
+                    aux_img = Image.open(en_aux_imgs[i]).convert('RGB')
+                    aux_img = aux_processor(images=aux_img, return_tensors='pt')['pixel_values'].squeeze()
+                    aux_imgs.append(aux_img)
+                except:
+                    pass
             for i in range(min(3, len(en_rcnn_imgs))):
-                rcnn_img = Image.open(en_rcnn_imgs[i]).convert('RGB')
-                rcnn_img = rcnn_processor(images=rcnn_img, return_tensors='pt')['pixel_values'].squeeze()
-                rcnn_imgs.append(rcnn_img)
+                try:
+                    rcnn_img = Image.open(en_rcnn_imgs[i]).convert('RGB')
+                    rcnn_img = rcnn_processor(images=rcnn_img, return_tensors='pt')['pixel_values'].squeeze()
+                    rcnn_imgs.append(rcnn_img)
+                except:
+                    pass
             # padding
             for i in range(3-len(en_aux_imgs)):
                 aux_imgs.append(torch.zeros((3, aux_size, aux_size))) 
