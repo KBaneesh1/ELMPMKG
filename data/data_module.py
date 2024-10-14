@@ -172,14 +172,14 @@ class DataCollatorForSeq2Seq:
                     aux_img = aux_processor(images=aux_img, return_tensors='pt')['pixel_values'].squeeze()
                     aux_imgs.append(aux_img)
                 except:
-                    pixel_images.append(torch.zeros((3, 224, 224)))
+                    aux_imgs.append(torch.zeros((3, 224, 224)))
             for i in range(min(3, len(en_rcnn_imgs))):
                 try:
                     rcnn_img = Image.open(en_rcnn_imgs[i]).convert('RGB')
                     rcnn_img = rcnn_processor(images=rcnn_img, return_tensors='pt')['pixel_values'].squeeze()
                     rcnn_imgs.append(rcnn_img)
                 except:
-                    pixel_images.append(torch.zeros((3, 224, 224)))
+                    rcnn_imgs.append(torch.zeros((3, 224, 224)))
             # padding
             for i in range(3-len(en_aux_imgs)):
                 aux_imgs.append(torch.zeros((3, aux_size, aux_size))) 
