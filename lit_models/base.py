@@ -11,9 +11,11 @@ ONE_CYCLE_TOTAL_STEPS = 100
 
 class Config(dict):
     def __getattr__(self, name):
+        print("returning in __getattr__ function in Config class of base.py")
         return self.get(name)
 
     def __setattr__(self, name, val):
+        print("returning in __setattr__ function in Config class of base.py")
         self[name] = val
 
 
@@ -23,6 +25,7 @@ class BaseLitModel(pl.LightningModule):
     """
 
     def __init__(self, model, args: argparse.Namespace = None):
+        print("Initializing BaseLitModel class in base.py")
         super().__init__()
         self.model = model
         self.args = Config(vars(args)) if args is not None else {}
@@ -33,12 +36,14 @@ class BaseLitModel(pl.LightningModule):
 
     @staticmethod
     def add_to_argparse(parser):
+        print("returning in add_to_argparse function of BaseLitModel class in base.py")
         parser.add_argument("--optimizer", type=str, default=OPTIMIZER, help="optimizer class from torch.optim")
         parser.add_argument("--lr", type=float, default=LR)
         parser.add_argument("--weight_decay", type=float, default=0.01)
         return parser
 
     def configure_optimizers(self):
+        print("returning in configure_optimizers function og BaseLitModel class in base.py")
         optimizer = self.optimizer_class(self.parameters(), lr=self.lr)
         if self.one_cycle_max_lr is None:
             return optimizer
@@ -46,18 +51,22 @@ class BaseLitModel(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
 
     def forward(self, x):
+        print("returning forward function of BaseLitModel class in base.py")
         return self.model(x)
 
     def training_step(self, batch, batch_idx):  # pylint: disable=unused-argument
+        print("Inside training_step of BaseLitModel class in base.py")
         x, y = batch
         logits = self(x)
         loss = self.loss_fn(logits, y)
         self.log("train_loss", loss)
         self.train_acc(logits, y)
         self.log("train_acc", self.train_acc, on_step=False, on_epoch=True)
+        print("Exiting training_step of BaseLitModel class in base.py")
         return loss
 
     def validation_step(self, batch, batch_idx):  # pylint: disable=unused-argument
+        print("Logging in validation_step of BaseLitModel class in base.py")
         x, y = batch
         logits = self(x)
         loss = self.loss_fn(logits, y)
@@ -66,6 +75,7 @@ class BaseLitModel(pl.LightningModule):
         self.log("val_acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
 
     def test_step(self, batch, batch_idx):  # pylint: disable=unused-argument
+        print("Logging in test_step of BaseLitModel class in base.py")
         x, y = batch
         logits = self(x)
         self.test_acc(logits, y)
@@ -74,6 +84,7 @@ class BaseLitModel(pl.LightningModule):
     @property
     def num_training_steps(self) -> int:
         """Total training steps inferred from datamodule and devices."""
+        print("Inside num_training_steps of BaseLitModel class in base.py")
         if isinstance(self.trainer.limit_train_batches, int) and self.trainer.limit_train_batches != 0:
             dataset_size = self.trainer.limit_train_batches
         elif isinstance(self.trainer.limit_train_batches, float):
@@ -91,6 +102,8 @@ class BaseLitModel(pl.LightningModule):
         max_estimated_steps = (dataset_size // effective_batch_size) * self.trainer.max_epochs
 
         if self.trainer.max_steps and self.trainer.max_steps < max_estimated_steps:
+            print("Exiting num_training_steps of BaseLitModel class in base.py")
             return self.trainer.max_steps
+        print("Exiting num_training_steps of BaseLitModel class in base.py")
         return max_estimated_steps
     

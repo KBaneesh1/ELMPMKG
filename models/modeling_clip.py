@@ -50,6 +50,7 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
     """
     Expands attention_mask from `[bsz, seq_len]` to `[bsz, 1, tgt_seq_len, src_seq_len]`.
     """
+    print("Inside _expand_mask function of modeling_clip.py")
     bsz, src_len = mask.size()
     tgt_len = tgt_len if tgt_len is not None else src_len
 
@@ -63,16 +64,19 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
 # contrastive loss function, adapted from
 # https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/gpu/2021/03/07/CLIP.html
 def contrastive_loss(logits: torch.Tensor) -> torch.Tensor:
+    print("returning contrastive_loss function of modeling_clip.py")
     return nn.functional.cross_entropy(logits, torch.arange(len(logits), device=logits.device))
 
 
 def clip_loss(similarity: torch.Tensor) -> torch.Tensor:
+    print("returning clip_loss function of modeling_clip.py")
     caption_loss = contrastive_loss(similarity)
     image_loss = contrastive_loss(similarity.T)
     return (caption_loss + image_loss) / 2.0
 
 
 class CLIPBaseModelOutput(ModelOutput):
+    print("Assigning CLIPBaseModelOutput class variables of modeling_clip.py")
     last_hidden_state: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
@@ -80,11 +84,12 @@ class CLIPBaseModelOutput(ModelOutput):
 
 
 class CLIPBaseModelOutputWithPooling(ModelOutput):
+    print("Assigning CLIPBaseModelOutputWithPooling class variables of modeling_clip.py")
     last_hidden_state: torch.FloatTensor = None
     pooler_output: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
-    qks: Optional[Tuple[torch.FloatTensor]] = None
+    qks: Optional[Tuple[torch.FloatTensor]] = None 
 
 
 class CLIPOutput(ModelOutput):
@@ -109,7 +114,7 @@ class CLIPOutput(ModelOutput):
         vision_model_output(:obj:`BaseModelOutputWithPooling`):
             The output of the :class:`~transformers.CLIPVisionModel`.
     """
-
+    print("Assigning CLIPOutput class variables of modeling_clip.py")
     loss: Optional[torch.FloatTensor] = None
     logits_per_image: torch.FloatTensor = None 
     logits_per_text: torch.FloatTensor = None
@@ -119,6 +124,7 @@ class CLIPOutput(ModelOutput):
     vision_model_output: BaseModelOutputWithPooling = None
 
     def to_tuple(self) -> Tuple[Any]:
+        print("Inside to_tuple class of CLIPOutput class of modeling_clip.py")
         return tuple(
             self[k] if k not in ["text_model_output", "vision_model_output"] else getattr(self, k).to_tuple()
             for k in self.keys()
@@ -127,6 +133,7 @@ class CLIPOutput(ModelOutput):
 
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config: CLIPVisionConfig):
+        print("Initialisng CLIPVisionEmbeddings class of modellingclip.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -152,6 +159,7 @@ class CLIPVisionEmbeddings(nn.Module):
         self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
 
     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+        print("Inside forward function CLIPVisionEmbeddings class of modellingclip.py")
         batch_size = pixel_values.shape[0]
         # patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
         # patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [*, grid*grid, width]
@@ -182,11 +190,13 @@ class CLIPVisionEmbeddings(nn.Module):
             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
             rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
+        print("Exiting forward function CLIPVisionEmbeddings class of modellingclip.py")
         return embeddings
 
 
 class CLIPTextEmbeddings(nn.Module):
     def __init__(self, config: CLIPTextConfig):
+        print("Initialisng CLIPTextEmbeddings class of modellingclip.py")
         super().__init__()
         embed_dim = config.hidden_size
 
@@ -197,6 +207,7 @@ class CLIPTextEmbeddings(nn.Module):
         self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
 
     def forward(self, input_ids=None, position_ids=None, inputs_embeds=None):
+        print("Inside forward function CLIPTextEmbeddings class of modellingclip.py")
         seq_length = input_ids.shape[-1] if input_ids is not None else inputs_embeds.shape[-2]
 
         if position_ids is None:
@@ -207,7 +218,7 @@ class CLIPTextEmbeddings(nn.Module):
 
         position_embeddings = self.position_embedding(position_ids)
         embeddings = inputs_embeds + position_embeddings
-
+        print("Exiting function CLIPTextEmbeddings class of modellingclip.py")
         return embeddings
 
 
@@ -215,6 +226,7 @@ class CLIPAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(self, config):
+        print("Initialisng CLIPAttention class of modellingclip.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -232,6 +244,7 @@ class CLIPAttention(nn.Module):
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
+        print("Returning _shape CLIPAttention class of modellingclip.py")
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
@@ -243,7 +256,7 @@ class CLIPAttention(nn.Module):
         output_qks: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-
+        print("Inside forward function CLIPAttention class of modellingclip.py")
         bsz, tgt_len, embed_dim = hidden_states.size()
 
         # get query proj
@@ -256,7 +269,7 @@ class CLIPAttention(nn.Module):
 
         qks = None
         if output_qks:
-            qks = (query_states[:, :, 1:, :], key_states[:, :, 1:, :]) # 去掉cls
+            qks = (query_states[:, :, 1:, :], key_states[:, :, 1:, :]) 
 
         query_states = query_states.view(*proj_shape)
         key_states = key_states.view(*proj_shape)
@@ -315,11 +328,13 @@ class CLIPAttention(nn.Module):
         attn_output = self.out_proj(attn_output)
 
         # return attn_output, attn_weights_reshaped
+        print("Exiting forward function CLIPAttention class of modellingclip.py")
         return attn_output, attn_output, qks
 
 
 class CLIPMLP(nn.Module):
     def __init__(self, config):
+        print("Initialisng CLIPMLP class of modellingclip.py")
         super().__init__()
         self.config = config
         self.activation_fn = ACT2FN[config.hidden_act]
@@ -327,6 +342,7 @@ class CLIPMLP(nn.Module):
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
     def forward(self, hidden_states):
+        print("Executing forward of CLIPMLP class of modellingclip.py")
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
         hidden_states = self.fc2(hidden_states)
@@ -335,6 +351,7 @@ class CLIPMLP(nn.Module):
 
 class CLIPEncoderLayer(nn.Module):
     def __init__(self, config: CLIPConfig):
+        print("Initialisng CLIPMLP class of modellingclip.py")
         super().__init__()
         self.embed_dim = config.hidden_size
         self.self_attn = CLIPAttention(config)
@@ -361,6 +378,7 @@ class CLIPEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under
                 returned tensors for more detail.
         """
+        print("Inside forward of CLIPEncoderLayer of modelling_clip.py")
         residual = hidden_states
  
         hidden_states = self.layer_norm1(hidden_states)
@@ -385,7 +403,7 @@ class CLIPEncoderLayer(nn.Module):
         
         if output_qks:
             outputs += (qks,)
-
+        print("Exiting forward of CLIPEncoderLayer of modelling_clip.py")
         return outputs
 
 
@@ -402,16 +420,20 @@ class CLIPPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         """Initialize the weights"""
+        print("Initialisng CLIPPreTrainedModel class of modellingclip.py")
         factor = self.config.initializer_factor
         if isinstance(module, CLIPTextEmbeddings):
+            print("instancec of CLIPTextEmbeddings in modelling_clip.py")
             module.token_embedding.weight.data.normal_(mean=0.0, std=factor * 0.02)
             module.position_embedding.weight.data.normal_(mean=0.0, std=factor * 0.02)
         elif isinstance(module, CLIPVisionEmbeddings):
+            print("instancec of CLIPVisionEmbeddings in modelling_clip.py")
             factor = self.config.initializer_factor
             nn.init.normal_(module.class_embedding, mean=0.0, std=module.embed_dim ** -0.5 * factor)
             nn.init.normal_(module.patch_embedding.weight, std=module.config.initializer_range * factor)
             nn.init.normal_(module.position_embedding.weight, std=module.config.initializer_range * factor)
         elif isinstance(module, CLIPAttention):
+            print("instancec of CLIPAttention in modelling_clip.py")
             factor = self.config.initializer_factor
             in_proj_std = (module.embed_dim ** -0.5) * ((2 * module.config.num_hidden_layers) ** -0.5) * factor
             out_proj_std = (module.embed_dim ** -0.5) * factor
@@ -420,6 +442,7 @@ class CLIPPreTrainedModel(PreTrainedModel):
             nn.init.normal_(module.v_proj.weight, std=in_proj_std)
             nn.init.normal_(module.out_proj.weight, std=out_proj_std)
         elif isinstance(module, CLIPMLP):
+            print("instancec of CLIPMLP in modelling_clip.py")
             factor = self.config.initializer_factor
             in_proj_std = (
                 (module.config.hidden_size ** -0.5) * ((2 * module.config.num_hidden_layers) ** -0.5) * factor
@@ -428,6 +451,7 @@ class CLIPPreTrainedModel(PreTrainedModel):
             nn.init.normal_(module.fc1.weight, std=fc_std)
             nn.init.normal_(module.fc2.weight, std=in_proj_std)
         elif isinstance(module, CLIPModel):
+            print("instancec of CLIPModel in modelling_clip.py")
             nn.init.normal_(
                 module.text_projection.weight,
                 std=module.text_embed_dim ** -0.5 * self.config.initializer_factor,
@@ -444,6 +468,7 @@ class CLIPPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
 
     def _set_gradient_checkpointing(self, module, value=False):
+        print("executing _set_gradient_checkpointing function of CLIPPreTrainedModel in modelling_clip.py")
         if isinstance(module, CLIPEncoder):
             module.gradient_checkpointing = value
 
@@ -557,9 +582,10 @@ class CLIPEncoder(nn.Module):
     Args:
         config: CLIPConfig
         embed_tokens (nn.Embedding): output embedding
-    """
+    """ 
 
     def __init__(self, config: CLIPConfig):
+        print("Initializing CLIPEncoder in modelling_clip.py")
         super().__init__()
         self.config = config
         self.layers = nn.ModuleList([CLIPEncoderLayer(config) for _ in range(config.num_hidden_layers)])
@@ -604,6 +630,7 @@ class CLIPEncoder(nn.Module):
             return_dict (:obj:`bool`, `optional`):
                 Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple.
         """
+        print("Inside forward os CLIPEncoder in modelling_clip.py")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -652,7 +679,9 @@ class CLIPEncoder(nn.Module):
             encoder_states = encoder_states + (hidden_states,)
 
         if not return_dict:
+            print("Exiting forward os CLIPEncoder in modelling_clip.py")
             return tuple(v for v in [hidden_states, encoder_states, all_attentions] if v is not None)
+        print("Exiting forward os CLIPEncoder in modelling_clip.py")
         return CLIPBaseModelOutput(
             last_hidden_state=hidden_states, hidden_states=encoder_states, attentions=all_attentions, qks=all_qks
         )
@@ -660,6 +689,7 @@ class CLIPEncoder(nn.Module):
 
 class CLIPTextTransformer(nn.Module):
     def __init__(self, config: CLIPTextConfig):
+        print("Initializing CLIPTextTransformer in modelling_clip.py")
         super().__init__()
         self.config = config
         embed_dim = config.hidden_size
@@ -682,6 +712,7 @@ class CLIPTextTransformer(nn.Module):
         Returns:
 
         """
+        print("Inside forward of CLIPTextTransformer in modelling_clip.py")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -722,8 +753,9 @@ class CLIPTextTransformer(nn.Module):
         pooled_output = last_hidden_state[torch.arange(last_hidden_state.shape[0]), input_ids.argmax(dim=-1)]
 
         if not return_dict:
+            print("Exiting forward of CLIPTextTransformer in modelling_clip.py")
             return (last_hidden_state, pooled_output) + encoder_outputs[1:]
-
+        print("Exiting forward of CLIPTextTransformer in modelling_clip.py")
         return BaseModelOutputWithPooling(
             last_hidden_state=last_hidden_state,
             pooler_output=pooled_output,
@@ -734,6 +766,7 @@ class CLIPTextTransformer(nn.Module):
     def _build_causal_attention_mask(self, bsz, seq_len):
         # lazily create causal attention mask, with full attention between the vision tokens
         # pytorch uses additive attention mask; fill with -inf
+        print("Executing _build_causal_attention_mask of CLIPTextTransformer in modelling_clip.py")
         mask = torch.empty(bsz, seq_len, seq_len)
         mask.fill_(float("-inf"))
         mask.triu_(1)  # zero out the lower diagonal
@@ -745,14 +778,17 @@ class CLIPTextModel(CLIPPreTrainedModel):
     config_class = CLIPTextConfig
 
     def __init__(self, config: CLIPTextConfig):
+        print("Initializing CLIPTextModel in modelling_clip.py")
         super().__init__(config)
         self.text_model = CLIPTextTransformer(config)
         self.init_weights()
 
     def get_input_embeddings(self) -> nn.Module:
+        print("Executing get_input_embeddings of CLIPTextModel in modelling_clip.py")
         return self.text_model.embeddings.token_embedding
 
     def set_input_embeddings(self, value):
+        print("Executing set_input_embeddings of CLIPTextModel in modelling_clip.py")
         self.text_model.embeddings.token_embedding = value
 
     @add_start_docstrings_to_model_forward(CLIP_TEXT_INPUTS_DOCSTRING)
@@ -783,6 +819,7 @@ class CLIPTextModel(CLIPPreTrainedModel):
             >>> last_hidden_state = outputs.last_hidden_state
             >>> pooled_output = outputs.pooled_output # pooled (EOS token) states
         """
+        print("Executing forward of CLIPTextModel in modelling_clip.py")
         return self.text_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -796,6 +833,7 @@ class CLIPTextModel(CLIPPreTrainedModel):
 
 class CLIPVisionTransformer(nn.Module):
     def __init__(self, config: CLIPVisionConfig):
+        print("Initializing CLIPVisionTransformer in modelling_clip.py")
         super().__init__()
         self.config = config
         embed_dim = config.hidden_size
@@ -821,6 +859,7 @@ class CLIPVisionTransformer(nn.Module):
         Returns:
 
         """
+        print("Inside forward of CLIPVisionTransformer in modelling_clip.py")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -848,7 +887,9 @@ class CLIPVisionTransformer(nn.Module):
         pooled_output = self.post_layernorm(pooled_output)
 
         if not return_dict:
+            print("Exiting forward of CLIPVisionTransformer in modelling_clip.py")
             return (last_hidden_state, pooled_output) + encoder_outputs[1:]
+        print("Exiting forward of CLIPVisionTransformer in modelling_clip.py")
         return CLIPBaseModelOutputWithPooling(
             last_hidden_state=last_hidden_state,
             pooler_output=pooled_output,
@@ -862,11 +903,13 @@ class CLIPVisionModel(CLIPPreTrainedModel):
     config_class = CLIPVisionConfig
 
     def __init__(self, config: CLIPVisionConfig):
+        print("Initializing CLIPVisionModel in modelling_clip.py")
         super().__init__(config)
         self.vision_model = CLIPVisionTransformer(config)
         self.init_weights()
 
     def get_input_embeddings(self) -> nn.Module:
+        print("Executing get_input_embeddings of CLIPVisionModel in modelling_clip.py")
         return self.vision_model.embeddings.patch_embedding
 
     @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
@@ -899,6 +942,7 @@ class CLIPVisionModel(CLIPPreTrainedModel):
             >>> last_hidden_state = outputs.last_hidden_state
             >>> pooled_output = outputs.pooled_output # pooled CLS states
         """
+        print("Executing forward of CLIPVisionModel in modelling_clip.py")
         return self.vision_model(
             pixel_values=pixel_values,
             output_attentions=output_attentions,
@@ -912,6 +956,7 @@ class CLIPModel(CLIPPreTrainedModel):
     config_class = CLIPConfig
 
     def __init__(self, config: CLIPConfig):
+        print("Initializing CLIPModel in modelling_clip.py")
         super().__init__(config)
 
         if not isinstance(config.text_config, CLIPTextConfig):
@@ -965,6 +1010,7 @@ class CLIPModel(CLIPPreTrainedModel):
             >>> inputs = tokenizer(["a photo of a cat", "a photo of a dog"],  padding=True, return_tensors="pt")
             >>> text_features = model.get_text_features(**inputs)
         """
+        print("Inside get_text_features of CLIPModel in modelling_clip.py")
         text_outputs = self.text_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -976,7 +1022,7 @@ class CLIPModel(CLIPPreTrainedModel):
 
         pooled_output = text_outputs[1]
         text_features = self.text_projection(pooled_output)
-
+        print("Exiting get_text_features of CLIPModel in modelling_clip.py")
         return text_features
 
     @add_start_docstrings_to_model_forward(CLIP_VISION_INPUTS_DOCSTRING)
@@ -1008,6 +1054,7 @@ class CLIPModel(CLIPPreTrainedModel):
 
             >>> image_features = model.get_image_features(**inputs)
         """
+        print("Executing get_image_features of CLIPModel in modelling_clip.py")
         vision_outputs = self.vision_model(
             pixel_values=pixel_values,
             output_attentions=output_attentions,
@@ -1055,6 +1102,7 @@ class CLIPModel(CLIPPreTrainedModel):
             >>> probs = logits_per_image.softmax(dim=1) # we can take the softmax to get the label probabilities
 
         """
+        print("Inside forward of CLIPModel in modelling_clip.py")
         return_dict = return_dict if return_dict is not None else self.config.return_dict
         vision_outputs = self.vision_model(
             pixel_values=pixel_values,
@@ -1093,8 +1141,10 @@ class CLIPModel(CLIPPreTrainedModel):
 
         if not return_dict:
             output = (logits_per_image, logits_per_text, text_embeds, image_embeds, text_outputs, vision_outputs)
+            print("Exitingforward of CLIPModel in modelling_clip.py")
             return ((loss,) + output) if loss is not None else output
 
+        print("Exitingforward of CLIPModel in modelling_clip.py")
         return CLIPOutput(
             loss=loss,
             logits_per_image=logits_per_image,

@@ -35,6 +35,7 @@ def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int],
         """
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
+        print("Executing get_extended_attention_mask in modelling_unimo.py")
         if attention_mask.dim() == 3:
             extended_attention_mask = attention_mask[:, None, :, :]
         elif attention_mask.dim() == 2:
@@ -75,6 +76,7 @@ def get_head_mask(
             :obj:`torch.Tensor` with shape :obj:`[num_hidden_layers x batch x num_heads x seq_length x seq_length]` or
             list with :obj:`[None]` for each layer.
         """
+        print("Executing get_head_mask modelling_unimo.py")
         head_mask = [None] * num_hidden_layers
 
         return head_mask
@@ -84,10 +86,12 @@ def get_head_mask(
 class UnimoConfig(PretrainedConfig):
     
     def __init__(self, **kwargs):
+        print("Initializing UnimoConfig")
         super().__init__(**kwargs)
 
 
 class UnimoPreTrainedModel(PreTrainedModel):
+    print("Initializing UnimoPreTrainedModel")
     config_class = UnimoConfig 
     base_model_prefix = "clip"
     supports_gradient_checkpointing = True
@@ -99,6 +103,7 @@ class UnimoPreTrainedModel(PreTrainedModel):
 
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config):
+        print("Initializing CLIPVisionEmbeddings in modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -129,6 +134,7 @@ class CLIPVisionEmbeddings(nn.Module):
         self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
 
     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+        print("Inside forward of CLIPVisionEmbeddings in modelling_unimo.py")
         batch_size = pixel_values.shape[0]
         patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [*, grid*grid, width]
@@ -173,6 +179,7 @@ class CLIPVisionEmbeddings(nn.Module):
             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
             # rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
+        print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
         return embeddings
 
 
@@ -180,6 +187,7 @@ class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     def __init__(self, config):
+        print("Initializing BertEmbeddings in modelling_unimo.py")
         super().__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
@@ -195,7 +203,8 @@ class BertEmbeddings(nn.Module):
 
     def forward(
         self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0
-    ):
+    ):  
+        print("Inside forward of BertEmbeddings in modelling_unimo.py")
         if input_ids is not None:
             input_shape = input_ids.size()
         else:
@@ -227,6 +236,7 @@ class BertEmbeddings(nn.Module):
             embeddings += position_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+        print("Exiting forward of BertEmbeddings in modelling_unimo.py")
         return embeddings
 
 
@@ -234,6 +244,7 @@ class CLIPAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(self, config):
+        print("Initializing CLIPAttention of modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -260,7 +271,7 @@ class CLIPAttention(nn.Module):
         past_key_values: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-
+        print("Inside forward of CLIPAttention of modelling_unimo.py")
         bsz, tgt_len, embed_dim = hidden_states.size()
 
         # get query proj
@@ -312,12 +323,13 @@ class CLIPAttention(nn.Module):
         attn_output = attn_output.reshape(bsz, tgt_len, embed_dim)
 
         attn_output = self.out_proj(attn_output)
-
+        print("Exiting forward of CLIPAttention of modelling_unimo.py")
         return attn_output, attn_weights_reshaped
 
 
 class CLIPMLP(nn.Module):
     def __init__(self, config):
+        print("Initializing CLIPMPL in modelling_unimo")
         super().__init__()
         self.config = config
         self.activation_fn = ACT2FN[config.hidden_act]
@@ -325,6 +337,7 @@ class CLIPMLP(nn.Module):
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
     def forward(self, hidden_states):
+        print("Executing forward of CLIPMLP class of modelling_unimo.py")
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
         hidden_states = self.fc2(hidden_states)
@@ -333,6 +346,7 @@ class CLIPMLP(nn.Module):
 
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
+        print("Initializing BertSelfAttention of modelling_unimo.py")
         super().__init__()
         self.num_attention_heads = config.num_attention_heads   # 12
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads) # 64
@@ -346,6 +360,7 @@ class BertSelfAttention(nn.Module):
         self.fusion = BertFusion(config)    # 
 
     def transpose_for_scores(self, x):
+        print("Executing transpose_for_scores of BertSelfAttention of modelling_unimo.py")
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
@@ -360,7 +375,7 @@ class BertSelfAttention(nn.Module):
         output_qks=None,
     ):
         mixed_query_layer = self.query(hidden_states)
-
+        print("Inside forward of BertSelfAttention of modelling_unimo.py")
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
@@ -395,18 +410,20 @@ class BertSelfAttention(nn.Module):
         fusion_output = self.fusion(context_layer, visual_hidden_state) if visual_hidden_state is not None else None # add
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-
+        print("Exiting forward of BertSelfAttention of modelling_unimo.py")
         return outputs, fusion_output, qks
 
 
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
+        print("Initializing BertSelfOutput of modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
+        print("Executing forward of BertSelfOutput of modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -415,6 +432,7 @@ class BertSelfOutput(nn.Module):
 
 class BertFusion(nn.Module):
     def __init__(self, config):
+        print("Initializing BertFusion of modelling_unimo.py")
         super().__init__()
         # self.fusion_function = config.fusion_function
         self.fusion_function = 'softmax'
@@ -425,6 +443,7 @@ class BertFusion(nn.Module):
         visual_hidden_state=None,
     ):
         # lilei: fusion
+        print("Executing forward of modelling_unimo.py")
         fusion_scores = torch.matmul(hidden_states, visual_hidden_state.transpose(-1, -2))  # bsz, 128, 49
         # if attention_mask is not None:
         #     # attention_mask: bsz, 1, 1, 128; fusion_scores: bsz, 128, 49
@@ -439,6 +458,7 @@ class BertFusion(nn.Module):
 
 class BertAttention(nn.Module):
     def __init__(self, config):
+        print("Initializng BertAttention modelling_unimo.py")
         super().__init__()
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
@@ -453,6 +473,7 @@ class BertAttention(nn.Module):
         visual_hidden_state=None,
         output_qks=None,
     ):
+        print("Executing forward of BertAttention of modelling_unimo.py")
         self_outputs, fusion_output, qks = self.self(
             hidden_states,
             attention_mask,
@@ -468,6 +489,7 @@ class BertAttention(nn.Module):
 
 class BertIntermediate(nn.Module):
     def __init__(self, config):
+        print("Initializing BertIntermediate of modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
         self.fusion_dense = nn.Linear(config.hidden_size, config.intermediate_size)
@@ -477,6 +499,7 @@ class BertIntermediate(nn.Module):
             self.intermediate_act_fn = config.hidden_act
 
     def forward(self, hidden_states, fusion_output=None):
+        print("Executing forward of BertIntermediate of modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         if fusion_output is not None:
             fusion_states = self.fusion_dense(fusion_output)
@@ -487,12 +510,14 @@ class BertIntermediate(nn.Module):
 
 class BertOutput(nn.Module):
     def __init__(self, config):
+        print("Initialzing BertOutput modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
+        print("Inside forward of BertOutput modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -501,6 +526,7 @@ class BertOutput(nn.Module):
 
 class CLIPEncoderLayer(nn.Module):
     def __init__(self, config):
+        print("Initialzing CLIPEncoderLayer modelling_unimo.py")
         super().__init__()
         self.embed_dim = config.hidden_size
         self.self_attn = CLIPAttention(config)
@@ -525,6 +551,7 @@ class CLIPEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under
                 returned tensors for more detail.
         """
+        print("Inside forward of CLIPEncoderLayer of modelling_unimo.py")
         residual = hidden_states
 
         hidden_states = self.layer_norm1(hidden_states)
@@ -544,12 +571,13 @@ class CLIPEncoderLayer(nn.Module):
 
         if output_attentions:
             outputs += (attn_weights,)
-    
+        print("exiting forward of CLIPEncoderLayer of modelling_unimo.py")
         return outputs
 
 
 class BertLayer(nn.Module):
     def __init__(self, config):
+        print("Initializing BertLayer in modelling_unimo.py")
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
@@ -569,6 +597,7 @@ class BertLayer(nn.Module):
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         # self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        print("Inside forward of BertLayer in modelling_unimo.py")
         self_attention_outputs, fusion_output, qks = self.attention(
             hidden_states,
             attention_mask,
@@ -587,10 +616,11 @@ class BertLayer(nn.Module):
         outputs = (layer_output,) + outputs
         if output_qks: 
             outputs += (qks,)
-
+        print("Exiting forward of BertLayer in modelling_unimo.py")
         return outputs
 
     def feed_forward_chunk(self, attention_output, fusion_output):
+        print("Executing feed_forward_chunk of BertLayer in modelling_unimo.py")
         intermediate_output = self.intermediate(attention_output, fusion_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
@@ -598,6 +628,7 @@ class BertLayer(nn.Module):
 
 class UnimoEncoder(nn.Module):
     def __init__(self, vision_config, text_config):
+        print("Initializing UnimoEncoder of modelling_unimo")
         super().__init__()
         self.vision_config = vision_config
         self.text_config = text_config
@@ -615,6 +646,7 @@ class UnimoEncoder(nn.Module):
         output_hidden_states=None,
         return_dict=None,
     ):
+        print("Inside forward of UnimoEncoder of modelling_unimo")
         assert self.vision_config.num_hidden_layers == self.text_config.num_hidden_layers
 
         all_vision_hidden_states = () if output_hidden_states else None
@@ -664,12 +696,14 @@ class UnimoEncoder(nn.Module):
                 all_text_hidden_states = all_text_hidden_states + (text_hidden_states, )
         
         if not return_dict:
+            print("Exiting forward of UnimoEncoder of modelling_unimo")
             return tuple(
                 v for v in [
                     text_hidden_states,
                     all_text_hidden_states,
                     all_text_attentions,
                 ] if v is not None)
+        print("Exiting forward of UnimoEncoder of modelling_unimo")
         return BaseModelOutput(
             last_hidden_state=text_hidden_states, hidden_states=all_text_hidden_states, attentions=all_text_attentions
         )
@@ -677,6 +711,7 @@ class UnimoEncoder(nn.Module):
 
 class BertPooler(nn.Module):
     def __init__(self, config):
+        print("Initializg BertPooler in modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
@@ -684,6 +719,7 @@ class BertPooler(nn.Module):
     def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
+        print("executing forward of BertPooler in modelling_unimo.py")
         first_token_tensor = hidden_states[:, 0]
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
@@ -692,6 +728,7 @@ class BertPooler(nn.Module):
 
 class UnimoModel(nn.Module):
     def __init__(self, vision_config, text_config, add_pooling_layer=True):
+        print("Initializng UnimoModel of modelling_unimo.py")
         super(UnimoModel, self).__init__()
         # vision model
         self.vision_config = vision_config
@@ -724,6 +761,7 @@ class UnimoModel(nn.Module):
         output_hidden_states=None,
         return_dict=None,
     ):
+        print("Inside forward of UnimoModel of modelling_unimo")
         # pre vision
         vision_embedding_output = self.vision_embeddings(pixel_values, aux_values, rcnn_values)
         vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
@@ -765,8 +803,9 @@ class UnimoModel(nn.Module):
         pooled_output = self.text_pooler(sequence_output) if self.text_pooler is not None else None
 
         if not return_dict:
+            print("Exiting forward of UnimoModel of modelling_unimo")
             return (sequence_output, pooled_output) + encoder_outputs[1:]
-
+        print("Inside forward of UnimoModel of modelling_unimo")
         return BaseModelOutputWithPooling(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
@@ -776,6 +815,7 @@ class UnimoModel(nn.Module):
 
     def _init_text_weights(self, module):
         """Initialize the weights"""
+        print("Executing _init_text_weights of UnimoModel of modelling_unimo")
         if isinstance(module, nn.Linear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -791,12 +831,15 @@ class UnimoModel(nn.Module):
             module.weight.data.fill_(1.0)
 
     def get_input_embeddings(self):
+        print("Executing get_input_embeddings of UnimoModel of modelling_unimo")
         return self.text_embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
+        print("Executing set_input_embeddings of UnimoModel of modelling_unimo")
         self.text_embeddings.word_embeddings = value
 
     def resize_token_embeddings(self, new_num_tokens):
+        print("Executing resize_token_embeddings of UnimoModel of modelling_unimo")
         old_embeddings = self.get_input_embeddings()
         new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
         self.set_input_embeddings(new_embeddings)
@@ -822,6 +865,7 @@ class UnimoModel(nn.Module):
             :obj:`torch.nn.Embedding`: Pointer to the resized Embedding Module or the old Embedding Module if
             :obj:`new_num_tokens` is :obj:`None`
         """
+        print("Inside _get_resized_embeddings of UnimoModel of modelling_unimo")
         if new_num_tokens is None:
             return old_embeddings
         else:
@@ -849,12 +893,13 @@ class UnimoModel(nn.Module):
         # numbers of tokens to copy
         n = min(old_num_tokens, new_num_tokens)
         new_embeddings.weight.data[:n, :] = old_embeddings.weight.data[:n, :]
-
+        print("Exiting _get_resized_embeddings of UnimoModel of modelling_unimo")
         return new_embeddings
 
         
 class UnimoForMaskedLM(nn.Module):
     def __init__(self, vision_config, text_config):
+        print("Initializing UnimoForMaskedLM in modelling_unimo")
         super().__init__()
         self.unimo = UnimoModel(vision_config, text_config)
         self.cls = UnimoOnlyMLMHead(text_config)
@@ -878,6 +923,7 @@ class UnimoForMaskedLM(nn.Module):
         return_dict=None,
         labels=None,
     ):
+        print("Inside forward of UnimoForMaskedLM of modelling_unimo")
         outputs = self.unimo(
             input_ids,
             attention_mask=attention_mask,
@@ -903,7 +949,7 @@ class UnimoForMaskedLM(nn.Module):
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
-
+        print("Exiting forward of UnimoForMaskedLM of modelling_unimo")
         return MaskedLMOutput(
             loss=masked_lm_loss,
             logits=prediction_scores,
@@ -912,17 +958,21 @@ class UnimoForMaskedLM(nn.Module):
         )
 
     def get_output_embeddings(self):
+        print("Executing get_output_embeddings of UnimoForMaskedLM of modelling_unimo")
         return self.cls.predictions.decoder
 
     def set_output_embeddings(self, new_embeddings):
+        print("Executing set_output_embeddings of UnimoForMaskedLM of modelling_unimo")
         self.cls.predictions.decoder = new_embeddings
 
     def tie_weights(self):
+        print("Executing tie_weights of UnimoForMaskedLM of modelling_unimo")
         output_embeddings = self.get_output_embeddings()
         self._tie_or_clone_weights(output_embeddings, self.unimo.get_input_embeddings())
 
     def _tie_or_clone_weights(self, output_embeddings, input_embeddings):
         """Tie or clone module weights depending of whether we are using TorchScript or not"""
+        print("Executing _tie_or_clone_weights of UnimoForMaskedLM of modelling_unimo")
         if self.config.torchscript:
             output_embeddings.weight = nn.Parameter(input_embeddings.weight.clone())
         else:
@@ -942,21 +992,25 @@ class UnimoForMaskedLM(nn.Module):
             output_embeddings.out_features = input_embeddings.num_embeddings
 
     def resize_token_embeddings(self, new_num_tokens):
+        print("Executing resize_token_embeddings of UnimoForMaskedLM of modelling_unimo")
         self.unimo.resize_token_embeddings(new_num_tokens)
         self.tie_weights()
 
 class UnimoOnlyMLMHead(nn.Module):
     def __init__(self, config):
+        print("Initializing UniomoOnlyMLMHead of modeling_unimo")
         super().__init__()
         self.predictions = UnimoLMPredictionHead(config)
 
     def forward(self, sequence_output):
+        print("Executing forward of UnimoForMaskedLM of modelling_unimo")
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
 
 class UnimoLMPredictionHead(nn.Module):
     def __init__(self, config):
+        print("Initializing UnimoLMPredictionHead of modeling_unimo")
         super().__init__()
         self.transform = BertPredictionHeadTransform(config)
 
@@ -970,6 +1024,7 @@ class UnimoLMPredictionHead(nn.Module):
         self.decoder.bias = self.bias
 
     def forward(self, hidden_states):
+        print("Executing forward of UnimoLMPredictionHead of modelling_unimo")
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states)
         return hidden_states
@@ -977,6 +1032,7 @@ class UnimoLMPredictionHead(nn.Module):
 
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
+        print("Initializing BertPredictionHeadTransform of modeling_unimo")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         if isinstance(config.hidden_act, str):
@@ -986,6 +1042,7 @@ class BertPredictionHeadTransform(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
+        print("Executing forward of BertPredictionHeadTransform of modelling_unimo")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
         hidden_states = self.LayerNorm(hidden_states)

@@ -20,17 +20,20 @@ logger = logging.getLogger(__name__)
  
 
 def lmap(a, b):
+    print("Returning in lmap function")
     return list(map(a,b))
 
 
 def cache_results(_cache_fp, _refresh=False, _verbose=1):
     def wrapper_(func):
+        print("Inside wrapper_ function of cache_results function")
         signature = inspect.signature(func)
         for key, _ in signature.parameters.items():
             if key in ('_cache_fp', '_refresh', '_verbose'):
                 raise RuntimeError("The function decorated by cache_results cannot have keyword `{}`.".format(key))
 
         def wrapper(*args, **kwargs):
+            print("Inside nested wrapper of cache_results function")
             my_args = args[0]
             mode = args[-1]
             if '_cache_fp' in kwargs:
@@ -72,26 +75,30 @@ def cache_results(_cache_fp, _refresh=False, _verbose=1):
                     with open(cache_filepath, 'wb') as f:
                         pickle.dump(results, f)
                     logger.info("Save cache to {}.".format(cache_filepath))
-
+            print("Exciting nested wrapper of cache_results function")
             return results
-
+        print("Exciting wrapper_ function of cache_results function")
         return wrapper
-
+    print("cache_results decorater called")
     return wrapper_
 
 
 def solve(line,  set_type="train", pretrain=1):
+    print("inside solve function of processor.py")
     examples = []
         
     head_ent_text = ent2text[line[0]]
     tail_ent_text = ent2text[line[2]]
     relation_text = rel2text[line[1]]
-    
+    print("head ent text", head_ent_text)
+    print("tail ent text", tail_ent_text)
+    print("relation text", relation_text)
     i=0
     
     a = tail_filter_entities["\t".join([line[0],line[1]])]
     b = head_filter_entities["\t".join([line[2],line[1]])]
-    
+    print("a", a)
+    print("b", b)
     guid = "%s-%s" % (set_type, i)
     text_a = head_ent_text
     text_b = relation_text
@@ -104,11 +111,14 @@ def solve(line,  set_type="train", pretrain=1):
         examples.append(
             InputExample(guid=guid, text_a="[MASK]", text_b=text_b + "[PAD]", text_c = "[UNK]" + " " + text_c, label=lmap(lambda x: ent2id[x], b), real_label=ent2id[line[0]], en=ent2id[line[2]], rel=rel2id[line[1]], entity=line[2]))
         examples.append(
-            InputExample(guid=guid, text_a="[UNK] ", text_b=text_b + "[PAD]", text_c = "[MASK]" + text_a, label=lmap(lambda x: ent2id[x], a), real_label=ent2id[line[2]], en=ent2id[line[0]], rel=rel2id[line[1]], entity=line[0]))       
+            InputExample(guid=guid, text_a="[UNK] ", text_b=text_b + "[PAD]", text_c = "[MASK]" + text_a, label=lmap(lambda x: ent2id[x], a), real_label=ent2id[line[2]], en=ent2id[line[0]], rel=rel2id[line[1]], entity=line[0]))     
+    print("Examples", examples)
+    print("Exiting solve function of processor.py")  
     return examples
 
 
 def filter_init(head, tail, t1,t2, ent2id_, ent2token_, rel2id_):
+    print("Assigning variables in filter_init of processor.py")
     global head_filter_entities
     global tail_filter_entities
     global ent2text
@@ -127,17 +137,20 @@ def filter_init(head, tail, t1,t2, ent2id_, ent2token_, rel2id_):
 
 
 def delete_init(ent2text_):
+    print("Assigning variables in delete_init of processor.py")
     global ent2text
     ent2text = ent2text_
 
 
 def convert_examples_to_features_init(tokenizer_for_convert):
+    print("Assigning variables in convert_examples_to_features_init of processor.py")
     global tokenizer
     tokenizer = tokenizer_for_convert
 
 
 def convert_examples_to_features(example, max_seq_length, mode, pretrain=1):
     """Loads a data file into a list of `InputBatch`s."""
+    print("inside convert_examples_to_features of processor.py")
     text_a = " ".join(example.text_a.split()[:128])
     text_b = " ".join(example.text_b.split()[:128])
     text_c = " ".join(example.text_c.split()[:128])
@@ -166,12 +179,13 @@ def convert_examples_to_features(example, max_seq_length, mode, pretrain=1):
                             label=torch.tensor(example.real_label)
         )
     )
+    print("Exiting convert_examples_to_features of processor.py")
     return features
 
 
 @cache_results(_cache_fp="./dataset")
 def get_dataset(args, processor, label_list, tokenizer, mode):
-
+    print("Inside get_dataset function of processor.py which is using the decorator cache_results")
     assert mode in ["train", "dev", "test"], "mode must be in train dev test!"
 
     # use training data to construct the entity embedding
@@ -242,12 +256,13 @@ def get_dataset(args, processor, label_list, tokenizer, mode):
                 break
 
     features = KGCDataset(features)
+    print("Exciting get_dataset function of processor.py which is using the decorator cache_results")
     return features
 
 
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
-
+    print("Initializing InputExample class")
     def __init__(self, guid, text_a, text_b=None, text_c=None, label=None, real_label=None, en=None, rel=None, entity=None):
         """Constructs a InputExample.
 
@@ -269,12 +284,15 @@ class InputExample(object):
         self.en = en
         self.rel = rel # rel id
         self.entity = entity
+        print("text_a", text_a)
+        print("text_b", text_b)
+        print("text_c", text_c)
 
 
 @dataclass
 class InputFeatures:
     """A single set of features of data."""
-
+    print("inside InputFeatures of processor.py")
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     labels: torch.Tensor = None
@@ -302,6 +320,7 @@ class DataProcessor(object):
     @classmethod
     def _read_tsv(cls, input_file, quotechar=None):
         """Reads a tab separated value file."""
+        print("Inside _read_tsv funtion of DataProcess class processor.py")
         with open(input_file, "r", encoding="utf-8") as f:
             reader = csv.reader(f, delimiter="\t", quotechar=quotechar)
             lines = []
@@ -309,12 +328,14 @@ class DataProcessor(object):
                 if sys.version_info[0] == 2:
                     line = list(unicode(cell, 'utf-8') for cell in line)
                 lines.append(line)
+            print("Exiting _read_tsv funtion of DataProcess class processor.py")
             return lines
 
 
 class KGProcessor(DataProcessor):
     """Processor for knowledge graph data set."""
     def __init__(self, tokenizer, args):
+        print("initialising KGProcessor class processor.py")
         self.labels = set()
         self.tokenizer = tokenizer
         self.args = args
@@ -323,42 +344,50 @@ class KGProcessor(DataProcessor):
     
     def get_train_examples(self, data_dir):
         """See base class."""
+        print("Returing in get_train_examples KGProcessor class processor.py")
         return self._create_examples(
             self._read_tsv(os.path.join(data_dir, "train.tsv")), "train", data_dir, self.args)
 
     def get_dev_examples(self, data_dir):
         """See base class."""
+        print("Returing in get_dev_examples KGProcessor class processor.py")
         return self._create_examples(
             self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev", data_dir, self.args)
 
     def get_test_examples(self, data_dir, chunk=""):
       """See base class."""
+      print("Returing in get_test_examples KGProcessor class processor.py")
       return self._create_examples(
           self._read_tsv(os.path.join(data_dir, f"test{chunk}.tsv")), "test", data_dir, self.args)
 
     def get_relations(self, data_dir):
         """Gets all labels (relations) in the knowledge graph."""
         # return list(self.labels)
+        print("Inside get_relations KGProcessor class processor.py")
         with open(os.path.join(data_dir, "relations.txt"), 'r') as f:
             lines = f.readlines()
             relations = []
             for line in lines:
                 relations.append(line.strip().split('\t')[0])
         rel2token = {ent : f"[RELATION_{i}]" for i, ent in enumerate(relations)}
+        print("Exciting get_relations KGProcessor class processor.py")
         return list(rel2token.values())
 
     def get_labels(self, data_dir):
         """Gets all labels (0, 1) for triples in the knowledge graph."""
+        print("Inside get_labels KGProcessor class processor.py")
         relation = []
         with open(os.path.join(data_dir, "relation2text.txt"), 'r') as f:
             lines = f.readlines()
             entities = []
             for line in lines:
                 relation.append(line.strip().split("\t")[-1])
+        print("Exiting get_labels KGProcessor class processor.py")
         return relation
 
     def get_entities(self, data_dir):
         """Gets all entities in the knowledge graph."""
+        print("Inside get_entities KGProcessor class processor.py")
         with open(self.entity_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
             entities = []
@@ -366,22 +395,27 @@ class KGProcessor(DataProcessor):
                 entities.append(line.strip().split("\t")[0])
         
         ent2token = {ent : f"[ENTITY_{i}]" for i, ent in enumerate(entities)}
+        print("Exciting get_entities KGProcessor class processor.py")
         return list(ent2token.values())
 
     def get_train_triples(self, data_dir):
         """Gets training triples."""
+        print("Returning in get_train_triples KGProcessor class processor.py")
         return self._read_tsv(os.path.join(data_dir, "train.tsv"))
 
     def get_dev_triples(self, data_dir):
         """Gets validation triples."""
+        print("Returning in get_dev_triples KGProcessor class processor.py")
         return self._read_tsv(os.path.join(data_dir, "dev.tsv"))
 
     def get_test_triples(self, data_dir, chunk=""):
         """Gets test triples."""
+        print("Returning in get_test_triples KGProcessor class processor.py")
         return self._read_tsv(os.path.join(data_dir, f"test{chunk}.tsv"))
 
     def _create_examples(self, lines, set_type, data_dir, args):
         """Creates examples for the training and dev sets."""
+        print("Inside _create_examples KGProcessor class processor.py")
         # entity to text
         ent2text = {}
         ent2text_with_type = {}
@@ -493,11 +527,13 @@ class KGProcessor(DataProcessor):
         examples = tmp_examples
         # delete vars
         del head_filter_entities, tail_filter_entities, ent2text, rel2text, ent2id, ent2token, rel2id
+        print("Exciting _create_examples KGProcessor class processor.py")
         return examples
 
 
 class Verbalizer(object):
     def __init__(self, args):
+        print("Initialising Verbalizer class processor.py")
         if "WN18RR" in args.data_dir:
             self.mode = "WN18RR"
         elif "FB15k" in args.data_dir:
@@ -506,39 +542,47 @@ class Verbalizer(object):
             self.mode = "umls"
           
     def _convert(self, head, relation, tail):
+        print("Inside _convert function Verbalizer class processor.py")
         if self.mode == "umls":
             return f"The {relation} {head} is "
-        
+        print("Exiting _convert function Verbalizer class processor.py")
         return f"{head} {relation}"
 
 
 class KGCDataset(Dataset):
     def __init__(self, features):
+        print("Initializing KGCDataset classs processor.py")
         self.features = features
 
     def __getitem__(self, index):
+        print("returning __getitem__ in KGCDataset processor.py")
         return self.features[index]
     
     def __len__(self):
+        print("returning __len__ in KGCDataset processor.py")
         return len(self.features)
 
 
 class MultiprocessingEncoder(object):
     def __init__(self, tokenizer, args):
+        print("Initializing MultiprocessingEncoder class processor.py")
         self.tokenizer = tokenizer
         self.pretrain = args.pretrain
         self.max_seq_length = args.max_seq_length
 
     def initializer(self):
+        print("Initializng initializer in MultiprocessingEncoder class processor.py")
         global bpe
         bpe = self.tokenizer
 
     def encode(self, line):
+        print("Returning in encode function in MultiprocessingEncoder class processor.py")
         global bpe
         ids = bpe.encode(line)
         return list(map(str, ids))
 
     def decode(self, tokens):
+        print("Returning in decode function in MultiprocessingEncoder class processor.py")
         global bpe
         return bpe.decode(tokens)
 
@@ -546,22 +590,27 @@ class MultiprocessingEncoder(object):
         """
         Encode a set of lines. All lines will be encoded together.
         """
+        print("Inside encode_lines function in MultiprocessingEncoder class processor.py")
         enc_lines = []
         for line in lines:
             line = line.strip()
             if len(line) == 0:
                 return ["EMPTY", None]
             enc_lines.append(json.dumps(self.convert_examples_to_features(example=eval(line))))
+        print("Exiting encode_lines function in MultiprocessingEncoder class processor.py")
         return ["PASS", enc_lines]
 
     def decode_lines(self, lines):
+        print("Inside decode_lines function in MultiprocessingEncoder class processor.py")
         dec_lines = []
         for line in lines:
             tokens = map(int, line.strip().split())
             dec_lines.append(self.decode(tokens))
+        print("Exiting decode_lines function in MultiprocessingEncoder class processor.py")
         return ["PASS", dec_lines]
 
     def convert_examples_to_features(self, example):
+        print("Inside convert_examples_to_features function in MultiprocessingEncoder class processor.py")
         pretrain = self.pretrain
         max_seq_length = self.max_seq_length
         global bpe
@@ -575,6 +624,8 @@ class MultiprocessingEncoder(object):
             # the des of xxx is [MASK] .
             # xxx is the description of [MASK].
             input_text = f"The description of {text_a} is that {text_b} ."
+            input_text = input_text.encode('utf-8', 'ignore').decode('utf-8')
+            print("input text", input_text)
             inputs = bpe(
                 input_text,
                 truncation="longest_first",
@@ -589,7 +640,11 @@ class MultiprocessingEncoder(object):
             else:
                 input_text_a = text_a
                 input_text_b = bpe.sep_token.join([text_b, text_c])
-        
+
+            input_text_a = input_text_a.encode('utf-8', 'ignore').decode('utf-8')
+            print("Input text a", input_text_a)
+            input_text_b = input_text_b.encode('utf-8', 'ignore').decode('utf-8')
+            print("Input text b", input_text_b)
             inputs = bpe(
                 input_text_a,
                 input_text_b,
@@ -609,4 +664,5 @@ class MultiprocessingEncoder(object):
                                 entity=example['entity']
             )
         )
+        print("Exiting convert_examples_to_features function in MultiprocessingEncoder class processor.py")
         return features

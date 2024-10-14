@@ -9,9 +9,11 @@ from typing import Callable, Iterable, List
 
 def lmap(f: Callable, x: Iterable) -> List:
     """list(map(f, x))"""
+    print("Executing lmap function transformer.py")
     return list(map(f, x))
 
 def multilabel_categorical_crossentropy(y_pred, y_true):
+    print("Calculating multilabel categorical cross-entropy loss processor.py")
     y_pred = (1 - 2 * y_true) * y_pred
     y_pred_neg = y_pred - y_true * 1e12
     y_pred_pos = y_pred - (1 - y_true) * 1e12
@@ -23,17 +25,22 @@ def multilabel_categorical_crossentropy(y_pred, y_true):
     return (neg_loss + pos_loss).mean()
 
 def decode(output_ids, tokenizer):
+    print("Inside Decode fcuntion processor.py")
     return lmap(str.strip, tokenizer.batch_decode(output_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True))
 
 class TransformerLitModel(BaseLitModel):
     def __init__(self, model, args, tokenizer=None, data_config={}):
+        print("Initializing TransformerLitModel")
         super().__init__(model, args)
         self.save_hyperparameters(args)
         if args.bce:
+            print("Using BCEWithLogitsLoss")
             self.loss_fn = nn.BCEWithLogitsLoss()
         elif args.label_smoothing != 0.0:
+            print("Using LabelSmoothSoftmaxCEV1 with smoothing")
             self.loss_fn = LabelSmoothSoftmaxCEV1(lb_smooth=args.label_smoothing)
         else:
+            print("Using CrossEntropyLoss")
             self.loss_fn = nn.CrossEntropyLoss()
 
         self.best_acc = 0
@@ -47,13 +54,16 @@ class TransformerLitModel(BaseLitModel):
 
         if args.pretrain:
             # when pretrain, only tune embedding layers
+            print("Pretrain so tuning only embedding layers")
             self._freeze_attention()
 
 
     def forward(self, x):
+        print("Performing forward pass in TransformerLitModel")
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
+        print(f"Executing training_step for batch {batch_idx} in TransformerLitModel")
         labels = batch.pop("labels")
         label = batch.pop("label")
         input_ids = batch['input_ids']
@@ -65,15 +75,19 @@ class TransformerLitModel(BaseLitModel):
         assert mask_idx.shape[0] == bs, "only one mask in sequence!"
 
         if self.args.bce:
+            print("Calculating BCE loss")
             loss = self.loss_fn(mask_logits, labels)
         else:
+            print("Calculating Cross Entropy loss")
             loss = self.loss_fn(mask_logits, label)
 
         if batch_idx == 0:
+            print("Decoded input IDs for first batch:\n" + '\n'.join(self.decode(batch['input_ids'][:4])))
             print('\n'.join(self.decode(batch['input_ids'][:4])))
         return loss
 
     def _eval(self, batch, batch_idx, ):
+        print(f"Evaluating batch in _eval function of batch {batch_idx} in TransformerLitModel")
         labels = batch.pop("labels")
         input_ids = batch['input_ids']
         # single label
@@ -88,7 +102,7 @@ class TransformerLitModel(BaseLitModel):
         assert labels[0][label[0]], "correct ids must in filiter!"
         labels[torch.arange(bsz), label] = 0
         assert logits.shape == labels.shape
-        logits += labels * -100 # mask entity
+        logits += labels * -100 # mask entity 
 
         _, outputs = torch.sort(logits, dim=1, descending=True) # bsz, entities   index
         _, outputs = torch.sort(outputs, dim=1)
@@ -96,10 +110,12 @@ class TransformerLitModel(BaseLitModel):
         return dict(ranks = np.array(ranks))
 
     def validation_step(self, batch, batch_idx):
+        print(f"Running validation_step for batch {batch_idx} in TransformerLitModel")
         result = self._eval(batch, batch_idx)
         return result
 
     def validation_epoch_end(self, outputs) -> None:
+        print("Completing validation_epoch_end in TransformerLitModel")
         ranks = np.concatenate([_['ranks'] for _ in outputs])
         total_ranks = ranks.shape[0]
 
@@ -125,11 +141,13 @@ class TransformerLitModel(BaseLitModel):
   
 
     def test_step(self, batch, batch_idx):
+        print("executing test_step of TransformerLitModel")
         result = self._eval(batch, batch_idx)
         # self.log("Test/ranks", np.mean(ranks))
         return result
 
     def test_epoch_end(self, outputs) -> None:
+        print("executing test_epoch_end of TransformerLitModel")
         ranks = np.concatenate([_['ranks'] for _ in outputs])
 
         hits20 = (ranks<=20).mean()
@@ -146,6 +164,7 @@ class TransformerLitModel(BaseLitModel):
         self.log("Test/mrr", (1. / ranks).mean())
 
     def configure_optimizers(self):
+        print("Configure_optimizers of TransformerLitModel")
         no_decay_param = ["bias", "LayerNorm.weight"]
 
         optimizer_group_parameters = [
@@ -165,6 +184,7 @@ class TransformerLitModel(BaseLitModel):
         }
     
     def _freeze_attention(self):
+        print("_freeze_attention of TransformerLitModel")
         for k, v in self.model.named_parameters():
             if "word" not in k: 
                 v.requires_grad = False
@@ -172,6 +192,7 @@ class TransformerLitModel(BaseLitModel):
                 print(k)
     
     def _freaze_word_embedding(self):
+        print("Freezing word embedding layers TransformerLitModel")
         for k, v in self.model.named_parameters():
             if "word" in k:
                 print(k)
@@ -179,6 +200,7 @@ class TransformerLitModel(BaseLitModel):
 
     @staticmethod
     def add_to_argparse(parser):
+        print("executing add_to_argpare in transformnerlitmodel")
         parser = BaseLitModel.add_to_argparse(parser)
 
         parser.add_argument("--label_smoothing", type=float, default=0.1, help="")
