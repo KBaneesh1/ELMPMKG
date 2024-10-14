@@ -89,7 +89,7 @@ class CLIPBaseModelOutputWithPooling(ModelOutput):
     pooler_output: torch.FloatTensor = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
-    qks: Optional[Tuple[torch.FloatTensor]] = None
+    qks: Optional[Tuple[torch.FloatTensor]] = None 
 
 
 class CLIPOutput(ModelOutput):

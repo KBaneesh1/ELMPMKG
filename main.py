@@ -11,7 +11,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def _import_class(module_and_class_name: str) -> type: 
     """Import class from a module, e.g. 'text_recognizer.models.MLP'"""
-    print("Inside _import_class")
+    print("Inside _import_class , file = main.py")
     module_name, class_name = module_and_class_name.rsplit(".", 1)
     module = importlib.import_module(module_name)
     class_ = getattr(module, class_name)
@@ -21,7 +21,7 @@ def _import_class(module_and_class_name: str) -> type:
 
 def _setup_parser():
     """Set up Python's ArgumentParser with data, model, trainer, and other arguments."""
-    print("Inside _setup_parser")
+    print("Inside _setup_parser , file = main.py")
     parser = argparse.ArgumentParser(add_help=False)
 
     # Add Trainer specific arguments, such as --max_epochs, --gpus, --precision
@@ -62,7 +62,7 @@ def _setup_parser():
 
 
 def main():
-    print("Inside main")
+    print("Inside main , file = main.py")
     parser = _setup_parser()
     args = parser.parse_args()
     print(args)
@@ -88,6 +88,7 @@ def main():
     text_model_dict = bert.state_dict()
 
     def load_state_dict():
+        print("entry fuction = load_state_dict , file = main.py")
         """Load bert and vit pretrained weights"""
         vision_names, text_names = [], []
         model_dict = model.state_dict()
@@ -105,6 +106,7 @@ def main():
         assert len(vision_names) == len(clip_model_dict) and len(text_names) == len(text_model_dict), \
                     (len(vision_names), len(text_names), len(clip_model_dict), len(text_model_dict))
         model.load_state_dict(model_dict)
+        print("Exit fuction = load_state_dict , file = main.py")
         print('Load model state dict successful.')
     load_state_dict()
 
