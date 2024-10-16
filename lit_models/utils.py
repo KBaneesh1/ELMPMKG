@@ -3,7 +3,7 @@ import numpy as np
 
 def rank_score(ranks):
 	# prepare the dataset
-	print("Executing rank_score function in utils.py")
+	#print("Executing rank_score function in utils.py")
 	len_samples = len(ranks)
 	hits10 = [0] * len_samples
 	hits5 = [0] * len_samples
@@ -23,7 +23,7 @@ def rank_score(ranks):
 	return np.mean(hits10), np.mean(hits5), np.mean(hits1), np.mean(mrr)
 
 def acc(logits, labels):
-	print("Inside acc function in utils.py")
+	#print("Inside acc function in utils.py")
 	preds = np.argmax(logits, axis=-1)
 	return (preds == labels).mean()
 import torch.nn as nn
@@ -34,7 +34,7 @@ class LabelSmoothSoftmaxCEV1(nn.Module):
 	'''
 
 	def __init__(self, lb_smooth=0.1, reduction='mean', ignore_index=-100):
-		print("Initializing LabelSmoothFormaxCEV1 class in utils.py")
+		#print("Initializing LabelSmoothFormaxCEV1 class in utils.py")
 		super(LabelSmoothSoftmaxCEV1, self).__init__()
 		self.lb_smooth = lb_smooth
 		self.reduction = reduction
@@ -47,7 +47,7 @@ class LabelSmoothSoftmaxCEV1(nn.Module):
 		args: label: tensor of shape(N, H, W)
 		'''
 		# overcome ignored label
-		print("Inside forward function of LabelSmoothFormaxCEV1 class in utils.py")
+		#print("Inside forward function of LabelSmoothFormaxCEV1 class in utils.py")
 		with torch.no_grad():
 			num_classes = logits.size(1)
 			label = label.clone().detach()
@@ -65,5 +65,5 @@ class LabelSmoothSoftmaxCEV1(nn.Module):
 			loss = loss.sum() / n_valid
 		if self.reduction == 'sum':
 			loss = loss.sum()
-		print("Exiting forward function of LabelSmoothFormaxCEV1 class in utils.py")
+		#print("Exiting forward function of LabelSmoothFormaxCEV1 class in utils.py")
 		return loss
