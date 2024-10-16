@@ -157,9 +157,9 @@ def main():
                                                 
     # _saved_pretrain(lit_model, tokenizer, path)
     if "EntityEmbedding" not in lit_model.__class__.__name__:
-        #print("*path"*30)
+        print("*path"*30)
         #print(path)
     #print("Exiting main")
-    
-if __name__ == "__main__":
+
+if __name__ == "__main__" :
     main()
