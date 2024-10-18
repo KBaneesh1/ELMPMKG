@@ -18,6 +18,9 @@ from transformers.modeling_outputs import (
 )
 from diffusers import StableDiffusionPipeline 
 # some function
+diff_model = StableDiffusionPipeline.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+        ).vae
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
@@ -125,7 +128,8 @@ class CLIPVisionEmbeddings(nn.Module):
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
-     
+        for param in self.stable_diffusion_model.parameters():  # Unfreeze LDM for fine-tuning
+            param.requires_grad = True
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
