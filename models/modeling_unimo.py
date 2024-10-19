@@ -16,7 +16,7 @@ from transformers.modeling_outputs import (
     MaskedLMOutput,
     BaseModelOutputWithPooling,
 )
-from diffusers import StableDiffusionPipeline 
+# from diffusers import StableDiffusionPipeline 
 # some function
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
         """
@@ -109,11 +109,11 @@ class CLIPVisionEmbeddings(nn.Module):
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
-        self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
-        ).vae  # Make sure to use a GPU if available
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.stable_diffusion_model.to(device)
+    #     self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
+    # "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+    #     ).vae  # Make sure to use a GPU if available
+    #     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # self.stable_diffusion_model.to(device)
 # Extract the VAE encoder part (this is what will generate latent embeddings)
         # self.vae_encoder = self.stable_diffusion_model.vae
         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
@@ -145,9 +145,9 @@ class CLIPVisionEmbeddings(nn.Module):
         embeddings = patch_embeds
         # embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
         # embeddings = embeddings + self.position_embedding(self.position_ids)
-        latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values).latent_dist.sample()
-        latent_pixel_embeddings = latent_pixel_embeddings.flatten(2).transpose(1, 2)
-        embeddings = torch.cat((embeddings, latent_pixel_embeddings), dim=1)  # Concatenate LDM embeddings
+        # latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values).latent_dist.sample()
+        # latent_pixel_embeddings = latent_pixel_embeddings.flatten(2).transpose(1, 2)
+        # embeddings = torch.cat((embeddings, latent_pixel_embeddings), dim=1)  # Concatenate LDM embeddings
 
 
         # lilei:
@@ -157,9 +157,9 @@ class CLIPVisionEmbeddings(nn.Module):
                 aux_embed = self.patch_embedding(aux_embedding)
                 aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*16, 768 3个子图
                 
-                latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding).latent_dist.sample()
-                latent_aux_embed = latent_aux_embed.flatten(2).transpose(1, 2)
-                aux_embed = torch.cat((aux_embed, latent_aux_embed), dim=1)
+                # latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding).latent_dist.sample()
+                # latent_aux_embed = latent_aux_embed.flatten(2).transpose(1, 2)
+                # aux_embed = torch.cat((aux_embed, latent_aux_embed), dim=1)
 
                 aux_embeds.append(aux_embed)
             aux_embeds = torch.stack(aux_embeds) # bsz, 48, 768
@@ -172,9 +172,9 @@ class CLIPVisionEmbeddings(nn.Module):
                 rcnn_embed = self.patch_embedding(rcnn_embedding)
                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*4, 768 3个子图
 
-                latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding).latent_dist.sample()
-                latent_rcnn_embed = latent_rcnn_embed.flatten(2).transpose(1, 2)
-                rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed), dim=1)
+                # latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding).latent_dist.sample()
+                # latent_rcnn_embed = latent_rcnn_embed.flatten(2).transpose(1, 2)
+                # rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed), dim=1)
                 
                 rcnn_embeds.append(rcnn_embed)
             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
