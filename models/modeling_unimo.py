@@ -731,6 +731,7 @@ class VisualPrompting(nn.Module):
         super(VisualPrompting, self).__init__()
         # Initialize learnable prompt tokens (nn.Parameter)
         self.prompt_embeddings = nn.Parameter(torch.randn(prompt_length, embed_dim))
+        self.attention_layer = nn.MultiheadAttention(embed_dim, num_heads=8)
 
     def forward(self, vision_embeddings):
         """
@@ -745,7 +746,8 @@ class VisualPrompting(nn.Module):
 
         # Expand the prompt embeddings to match the batch size
         prompt_tokens = self.prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-        print("Prompt tokens = ",prompt_tokens)
+        # print("Prompt tokens = ",prompt_tokens)
+        prompt_tokens, _ = self.attention_layer(prompt_tokens, prompt_tokens, prompt_tokens)
         # Concatenate the prompt tokens to the image embeddings
         vision_embeddings_with_prompt = torch.cat([prompt_tokens, vision_embeddings], dim=1)
 
