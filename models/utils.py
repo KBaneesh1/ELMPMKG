@@ -8,7 +8,7 @@ class LabelSmoothSoftmaxCEV1(nn.Module):
     '''
 
     def __init__(self, lb_smooth=0.1, reduction='mean', ignore_index=-100):
-        print("Initializing LabelSmoothSoftmaxCEV1 of utils.py")
+        #print("Initializing LabelSmoothSoftmaxCEV1 of utils.py")
         super(LabelSmoothSoftmaxCEV1, self).__init__()
         self.lb_smooth = lb_smooth
         self.reduction = reduction
@@ -21,7 +21,7 @@ class LabelSmoothSoftmaxCEV1(nn.Module):
         args: label: tensor of shape(N, H, W)
         '''
         # overcome ignored label
-        print("Executing forward of LabelSmoothSoftmaxCEV1 of utils.py")
+        #print("Executing forward of LabelSmoothSoftmaxCEV1 of utils.py")
         with torch.no_grad():
             num_classes = logits.size(1)
             label = label.clone().detach()
@@ -52,13 +52,13 @@ class LabelSmoothing(nn.Module):
         Constructor for the LabelSmoothing module.
         :param smoothing: label smoothing factor
         """
-        print("Initializing LabelSmoothing of utils.py")
+        #print("Initializing LabelSmoothing of utils.py")
         super(LabelSmoothing, self).__init__()
         self.confidence = 1.0 - smoothing
         self.smoothing = smoothing
 
     def forward(self, x, target):
-        print("Executing forward of LabelSmoothing of utils.py")
+        #print("Executing forward of LabelSmoothing of utils.py")
         logprobs = torch.nn.functional.log_softmax(x, dim=-1)
 
         nll_loss = -logprobs.gather(dim=-1, index=target.unsqueeze(1))
@@ -68,7 +68,7 @@ class LabelSmoothing(nn.Module):
         return loss.mean()
 
 def get_entity_spans_pre_processing(sentences):
-    print("Executing get_entity_spans_pre_processing of utils.py")
+    #print("Executing get_entity_spans_pre_processing of utils.py")
     return [
         (
             " {} ".format(sent)
@@ -83,7 +83,7 @@ def get_entity_spans_pre_processing(sentences):
 
 
 def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=-100):
-    print("Executing label_smoothed_nll_loss of utils.py")
+    #print("Executing label_smoothed_nll_loss of utils.py")
     """From fairseq"""
     if target.dim() == lprobs.dim() - 1:
         target = target.unsqueeze(-1)
@@ -296,7 +296,7 @@ def is_faiss_available():
 
 
 def add_start_docstrings(*docstr):
-    print("Executing add_start_docstrings of utils.py")
+    #print("Executing add_start_docstrings of utils.py")
     def docstring_decorator(fn):
         fn.__doc__ = "".join(docstr) + (fn.__doc__ if fn.__doc__ is not None else "")
         return fn
@@ -306,7 +306,7 @@ def add_start_docstrings(*docstr):
 
 def add_start_docstrings_to_callable(*docstr):
     def docstring_decorator(fn):
-        print("Executing add_start_docstring_to_callable decorator of utils.py")
+        #print("Executing add_start_docstring_to_callable decorator of utils.py")
         class_name = ":class:`~transformers.{}`".format(fn.__qualname__.split(".")[0])
         intro = "   The {} forward method, overrides the :func:`__call__` special method.".format(class_name)
         note = r"""
@@ -325,7 +325,7 @@ def add_start_docstrings_to_callable(*docstr):
 
 def add_end_docstrings(*docstr):
     def docstring_decorator(fn):
-        print("Executing add_end_docstrings decorator of utils.py")
+        #print("Executing add_end_docstrings decorator of utils.py")
         fn.__doc__ = fn.__doc__ + "".join(docstr)
         return fn
 
@@ -354,7 +354,7 @@ TF_RETURN_INTRODUCTION = r"""
 
 def _get_indent(t):
     """Returns the indentation in the first line of t"""
-    print("Executing _get_indent of utils.py")
+    #print("Executing _get_indent of utils.py")
     search = re.search(r"^(\s*)\S", t)
     return "" if search is None else search.groups()[0]
 
@@ -362,7 +362,7 @@ def _get_indent(t):
 def _convert_output_args_doc(output_args_doc):
     """Convert output_args_doc to display properly."""
     # Split output_arg_doc in blocks argument/description
-    print("Inside _convert_output_args_doc of utils.py")
+    #print("Inside _convert_output_args_doc of utils.py")
     indent = _get_indent(output_args_doc)
     blocks = []
     current_block = ""
@@ -390,7 +390,7 @@ def _prepare_output_docstrings(output_type, config_class):
     """
     Prepares the return part of the docstring using `output_type`.
     """
-    print("Inside _prepare_output_docstrings of utils.py")
+    #print("Inside _prepare_output_docstrings of utils.py")
     docstrings = output_type.__doc__
 
     # Remove the head of the docstring to keep the list of args only
@@ -648,7 +648,7 @@ TF_CAUSAL_LM_SAMPLE = r"""
 
 def add_code_sample_docstrings(*docstr, tokenizer_class=None, checkpoint=None, output_type=None, config_class=None):
     def docstring_decorator(fn):
-        print("Executing add_code_sample_docstrings decorator")
+        #print("Executing add_code_sample_docstrings decorator")
         model_class = fn.__qualname__.split(".")[0]
         is_tf_class = model_class[:2] == "TF"
 
@@ -679,7 +679,7 @@ def add_code_sample_docstrings(*docstr, tokenizer_class=None, checkpoint=None, o
 
 def replace_return_docstrings(output_type=None, config_class=None):
     def docstring_decorator(fn):
-        print("Executing replace_return_docstrings decorator")
+        #print("Executing replace_return_docstrings decorator")
         docstrings = fn.__doc__
         lines = docstrings.split("\n")
         i = 0
@@ -699,7 +699,7 @@ def replace_return_docstrings(output_type=None, config_class=None):
 
 
 def is_remote_url(url_or_filename):
-    print("Executing is_remote_url")
+    #print("Executing is_remote_url")
     parsed = urlparse(url_or_filename)
     return parsed.scheme in ("http", "https")
 
@@ -720,7 +720,7 @@ def hf_bucket_url(model_id: str, filename: str, use_cdn=True, mirror=None) -> st
     are not shared between the two because the cached file's name contains
     a hash of the url.
     """
-    print("Executing hf_bucket_url")
+    #print("Executing hf_bucket_url")
     endpoint = (
         PRESET_MIRROR_DICT.get(mirror, mirror)
         if mirror
@@ -744,7 +744,7 @@ def url_to_filename(url, etag=None):
     so that TF 2.0 can identify it as a HDF5 file
     (see https://github.com/tensorflow/tensorflow/blob/00fad90125b18b80fe054de1055770cfb8fe4ba3/tensorflow/python/keras/engine/network.py#L1380)
     """
-    print("Executing url_to_filename")
+    #print("Executing url_to_filename")
     url_bytes = url.encode("utf-8")
     url_hash = sha256(url_bytes)
     filename = url_hash.hexdigest()
@@ -765,7 +765,7 @@ def filename_to_url(filename, cache_dir=None):
     Return the url and etag (which may be ``None``) stored for `filename`.
     Raise ``EnvironmentError`` if `filename` or its stored metadata do not exist.
     """
-    print("Executing filename_to_url")
+    #print("Executing filename_to_url")
     if cache_dir is None:
         cache_dir = TRANSFORMERS_CACHE
     if isinstance(cache_dir, Path):
@@ -817,7 +817,7 @@ def cached_path(
         None in case of non-recoverable file (non-existent or inaccessible url + no cache on disk).
         Local path (string) otherwise
     """
-    print("Inside cached_path of utils.py")
+    #print("Inside cached_path of utils.py")
     if cache_dir is None:
         cache_dir = TRANSFORMERS_CACHE
     if isinstance(url_or_filename, Path):
@@ -874,14 +874,14 @@ def cached_path(
                 tar_file.close()
             else:
                 raise EnvironmentError("Archive format of {} could not be identified".format(output_path))
-        print("exiting cached_path of utils.py")
+        #print("exiting cached_path of utils.py")
         return output_path_extracted
-    print("exiting cached_path of utils.py")
+    #print("exiting cached_path of utils.py")
     return output_path
 
 
 def http_get(url, temp_file, proxies=None, resume_size=0, user_agent: Union[Dict, str, None] = None):
-    print("Executing http_get")
+    #print("Executing http_get")
     ua = "transformers/{}; python/{}".format(__version__, sys.version.split()[0])
     if is_torch_available():
         ua += "; torch/{}".format(torch.__version__)
@@ -932,7 +932,7 @@ def get_from_cache(
         None in case of non-recoverable file (non-existent or inaccessible url + no cache on disk).
         Local path (string) otherwise
     """
-    print("Inside get_from_cache of utils.py")
+    #print("Inside get_from_cache of utils.py")
     if cache_dir is None:
         cache_dir = TRANSFORMERS_CACHE
     if isinstance(cache_dir, Path):
@@ -1025,7 +1025,7 @@ def get_from_cache(
         meta_path = cache_path + ".json"
         with open(meta_path, "w") as meta_file:
             json.dump(meta, meta_file)
-    print("Exiting get_from_cache of utils.py")
+    #print("Exiting get_from_cache of utils.py")
     return cache_path
 
 
@@ -1040,7 +1040,7 @@ class cached_property(property):
 
     def __get__(self, obj, objtype=None):
         # See docs.python.org/3/howto/descriptor.html#properties
-        print("Executing __get__ of cached_property of utils.py")
+        #print("Executing __get__ of cached_property of utils.py")
         if obj is None:
             return self
         if self.fget is None:
@@ -1057,7 +1057,7 @@ def torch_required(func):
     # Chose a different decorator name than in tests so it's clear they are not the same.
     @wraps(func)
     def wrapper(*args, **kwargs):
-        print("Executing torch_required decorator of utils.py")
+        #print("Executing torch_required decorator of utils.py")
         if is_torch_available():
             return func(*args, **kwargs)
         else:
@@ -1070,7 +1070,7 @@ def tf_required(func):
     # Chose a different decorator name than in tests so it's clear they are not the same.
     @wraps(func)
     def wrapper(*args, **kwargs):
-        print("Executing tf_required decorator of utils.py")
+        #print("Executing tf_required decorator of utils.py")
         if is_tf_available():
             return func(*args, **kwargs)
         else:
@@ -1081,7 +1081,7 @@ def tf_required(func):
 
 def is_tensor(x):
     """ Tests if ``x`` is a :obj:`torch.Tensor`, :obj:`tf.Tensor` or :obj:`np.ndarray`. """
-    print("Executing is_tensor of utils.py")
+    #print("Executing is_tensor of utils.py")
     if is_torch_available():
         import torch
 
@@ -1107,7 +1107,7 @@ class ModelOutput(OrderedDict):
     """
 
     def __post_init__(self):
-        print("inside __post_init__ of MOdelOutput")
+        #print("inside __post_init__ of MOdelOutput")
         class_fields = fields(self)
 
         # Safety and consistency checks

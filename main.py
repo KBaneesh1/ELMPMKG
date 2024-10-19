@@ -11,17 +11,17 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def _import_class(module_and_class_name: str) -> type: 
     """Import class from a module, e.g. 'text_recognizer.models.MLP'"""
-    print("Inside _import_class , file = main.py")
+    #print("Inside _import_class , file = main.py")
     module_name, class_name = module_and_class_name.rsplit(".", 1)
     module = importlib.import_module(module_name)
     class_ = getattr(module, class_name)
-    print("Exiting _import_class")
+    #print("Exiting _import_class")
     return class_
 
 
 def _setup_parser():
     """Set up Python's ArgumentParser with data, model, trainer, and other arguments."""
-    print("Inside _setup_parser , file = main.py")
+    #print("Inside _setup_parser , file = main.py")
     parser = argparse.ArgumentParser(add_help=False)
 
     # Add Trainer specific arguments, such as --max_epochs, --gpus, --precision
@@ -57,28 +57,28 @@ def _setup_parser():
     lit_model_class.add_to_argparse(lit_model_group)
 
     parser.add_argument("--help", "-h", action="help")
-    print("Exiting _setup_parser")
+    #print("Exiting _setup_parser")
     return parser
 
 
 def main():
-    print("Inside main , file = main.py")
+    #print("Inside main , file = main.py")
     parser = _setup_parser()
     args = parser.parse_args()
-    print(args)
+    #print(args)
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     pl.seed_everything(args.seed)
 
-    print("Importing classes")
+    #print("Importing classes")
     data_class = _import_class(f"data.{args.data_class}")               # Dataset
     model_class = _import_class(f"models.{args.model_class}")           # Model
     litmodel_class = _import_class(f"lit_models.{args.litmodel_class}") # Lit_model
-    print("Done importing Classes")
+    #print("Done importing Classes")
 
     # load pretrained visual and textual configs, models
-    print("Loading pre-trained models")
+    #print("Loading pre-trained models")
     vision_config = CLIPConfig.from_pretrained('openai/clip-vit-base-patch32').vision_config
     text_config = BertConfig.from_pretrained('bert-base-uncased')
     bert = BertModel.from_pretrained('bert-base-uncased')
@@ -89,10 +89,10 @@ def main():
     model = model_class(vision_config, text_config)
     clip_model_dict = clip_vit.state_dict()
     text_model_dict = bert.state_dict()
-    print("Done loading pretrained models")
+    #print("Done loading pretrained models")
 
     def load_state_dict():
-        print("entry fuction = load_state_dict , file = main.py")
+        #print("entry fuction = load_state_dict , file = main.py")
         """Load bert and vit pretrained weights"""
         vision_names, text_names = [], []
         model_dict = model.state_dict()
@@ -110,18 +110,18 @@ def main():
         assert len(vision_names) == len(clip_model_dict) and len(text_names) == len(text_model_dict), \
                     (len(vision_names), len(text_names), len(clip_model_dict), len(text_model_dict))
         model.load_state_dict(model_dict)
-        print("Exit fuction = load_state_dict , file = main.py")
-        print('Load model state dict successful.')
+        #print("Exit fuction = load_state_dict , file = main.py")
+        #print('Load model state dict successful.')
     load_state_dict()
 
     data = data_class(args, model)
     tokenizer = data.tokenizer
 
-    print("Initializing lit model class")
+    #print("Initializing lit model class")
     lit_model = litmodel_class(args=args, model=model, tokenizer=tokenizer, data_config=data.get_config())
     if args.checkpoint:
         lit_model.load_state_dict(torch.load(args.checkpoint, map_location="cpu")["state_dict"])
-    print("Done initializing lit model class")
+    #print("Done initializing lit model class")
 
 
     logger = pl.loggers.TensorBoardLogger("training/logs")
@@ -139,27 +139,27 @@ def main():
     )
     callbacks = [early_callback, model_checkpoint]
 
-    print("Initializing trainer")
+    #print("Initializing trainer")
     trainer = pl.Trainer.from_argparse_args(args, 
                                             callbacks=callbacks, 
                                             logger=logger, 
                                             default_root_dir="training/logs",)
-    print("Done Initializing trainer")
+    #print("Done Initializing trainer")
 
     if "EntityEmbedding" not in lit_model.__class__.__name__:
-        print("Starting training")
+        #print("Starting training")
         trainer.fit(lit_model, datamodule=data)
         path = model_checkpoint.best_model_path
         lit_model.load_state_dict(torch.load(path)["state_dict"])
 
     result = trainer.test(lit_model, datamodule=data)
-    print(result)
+    #print(result)
                                                 
     # _saved_pretrain(lit_model, tokenizer, path)
     if "EntityEmbedding" not in lit_model.__class__.__name__:
         print("*path"*30)
-        print(path)
-    print("Exiting main")
+        #print(path)
+    #print("Exiting main")
 
 
 

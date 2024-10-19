@@ -10,11 +10,11 @@ from torch.utils.data import DataLoader
 
 class Config(dict):
     def __getattr__(self, name):
-        print("inside __getattr__ function of Config class base_data_module.py")
+        #print("inside __getattr__ function of Config class base_data_module.py")
         return self.get(name)
 
     def __setattr__(self, name, val):
-        print("inside __setattr__ function of Config class base_data_module.py")
+        #print("inside __setattr__ function of Config class base_data_module.py")
         self[name] = val
 
 
@@ -37,7 +37,7 @@ class BaseDataModule(pl.LightningDataModule):
 
     @staticmethod
     def add_to_argparse(parser):
-        print("Inside add_to_argparse function BaseDataModule class")
+        #print("Inside add_to_argparse function BaseDataModule class")
         parser.add_argument(
             "--batch_size", type=int, default=BATCH_SIZE, help="Number of examples to operate on per forward step."
         )
@@ -47,7 +47,7 @@ class BaseDataModule(pl.LightningDataModule):
         parser.add_argument(
             "--dataset", type=str, default="./dataset/NELL", help="Number of additional processes to load data."
         )
-        print("Exiting add_to_argparse function BaseDataModule class")
+        #print("Exiting add_to_argparse function BaseDataModule class")
         return parser
 
     def prepare_data(self):
@@ -61,19 +61,19 @@ class BaseDataModule(pl.LightningDataModule):
         Split into train, val, test, and set dims.
         Should assign `torch Dataset` objects to self.data_train, self.data_val, and optionally self.data_test.
         """
-        print("Assignment in setup function of BaseDataModule class")
+        #print("Assignment in setup function of BaseDataModule class")
         self.data_train = None
         self.data_val = None
         self.data_test = None
 
     def train_dataloader(self):
-        print("Inside train_dataloader BaseDataModule class")
+        #print("Inside train_dataloader BaseDataModule class")
         return DataLoader(self.data_train, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True)
 
     def val_dataloader(self):
-        print("Inside val_dataloader BaseDataModule class")
+        #print("Inside val_dataloader BaseDataModule class")
         return DataLoader(self.data_val, shuffle=False, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True)
 
     def test_dataloader(self):
-        print("Inside ttest_dataloader BaseDataModule class")
+        #print("Inside ttest_dataloader BaseDataModule class")
         return DataLoader(self.data_test, shuffle=False, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True)
