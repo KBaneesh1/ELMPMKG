@@ -726,9 +726,34 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+class VisualPrompting(nn.Module):
+    def __init__(self, prompt_length, embed_dim):
+        super(VisualPrompting, self).__init__()
+        # Initialize learnable prompt tokens (nn.Parameter)
+        self.prompt_embeddings = nn.Parameter(torch.randn(prompt_length, embed_dim))
+
+    def forward(self, vision_embeddings):
+        """
+        Args:
+            vision_embeddings (torch.Tensor): The image embeddings (batch_size, seq_len, embed_dim)
+        
+        Returns:
+            torch.Tensor: Image embeddings with prepended prompt tokens
+        """
+        # Get the batch size from the vision embeddings
+        batch_size = vision_embeddings.size(0)
+
+        # Expand the prompt embeddings to match the batch size
+        prompt_tokens = self.prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+
+        # Concatenate the prompt tokens to the image embeddings
+        vision_embeddings_with_prompt = torch.cat([prompt_tokens, vision_embeddings], dim=1)
+
+        return vision_embeddings_with_prompt
+
 
 class UnimoModel(nn.Module):
-    def __init__(self, vision_config, text_config, add_pooling_layer=True):
+    def __init__(self, vision_config, text_config, add_pooling_layer=True,prompt_length=5):
         print("Initializng UnimoModel of modelling_unimo.py")
         super(UnimoModel, self).__init__()
         # vision model
@@ -736,7 +761,7 @@ class UnimoModel(nn.Module):
         self.vision_embeddings = CLIPVisionEmbeddings(vision_config)
         self.vision_pre_layrnorm = nn.LayerNorm(vision_config.hidden_size)
         self.vision_post_layernorm = nn.LayerNorm(vision_config.hidden_size)
-
+        self.visual_prompting = VisualPrompting(prompt_length, vision_config.hidden_size)
         # text model
         self.text_config = text_config
         self.text_embeddings = BertEmbeddings(text_config)
@@ -766,6 +791,8 @@ class UnimoModel(nn.Module):
         # pre vision
         vision_embedding_output = self.vision_embeddings(pixel_values, aux_values, rcnn_values)
         vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
+
+        vision_embedding_output = self.visual_prompting(vision_embedding_output)
 
         # pre text
         input_shape = input_ids.size()
