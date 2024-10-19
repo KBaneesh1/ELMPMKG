@@ -745,7 +745,7 @@ class VisualPrompting(nn.Module):
 
         # Expand the prompt embeddings to match the batch size
         prompt_tokens = self.prompt_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-
+        print("Prompt tokens = ",prompt_tokens)
         # Concatenate the prompt tokens to the image embeddings
         vision_embeddings_with_prompt = torch.cat([prompt_tokens, vision_embeddings], dim=1)
 
