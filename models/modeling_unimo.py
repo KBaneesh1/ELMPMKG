@@ -14,9 +14,9 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_outputs import (
     BaseModelOutput, 
     MaskedLMOutput,
-    BaseModelOutputWithPooling,
-    BaseModelOutputWithPoolingAndCrossAttention,
-    BaseModelOutputWithCrossAttention
+    BaseModelOutputWithPoolingAndCrossAttentions,
+    # BaseModelOutputWithPooling,
+    BaseModelOutputWithCrossAttentions
 )
 
 # some function
@@ -609,6 +609,7 @@ class BertLayer(nn.Module):
         return layer_output
 
 
+
 class UnimoEncoder(nn.Module):
     def __init__(self, vision_config, text_config):
         #print("Initializing UnimoEncoder of modelling_unimo")
@@ -690,7 +691,7 @@ class UnimoEncoder(nn.Module):
                     all_text_attentions,
                 ] if v is not None)
         #print("Exiting forward of UnimoEncoder of modelling_unimo")
-        return BaseModelOutputWithCrossAttention(
+        return BaseModelOutputWithCrossAttentions(
             last_hidden_state=text_hidden_states,
             hidden_states=all_text_hidden_states,
             attentions=all_text_attentions,
@@ -715,8 +716,50 @@ class BertPooler(nn.Module):
         return pooled_output
 
 
+
+class VisualPrompt(nn.Module):
+    def __init__(self, prompt_size, image_size):
+        super().__init__()
+        self.prompt_size = prompt_size
+        self.image_size = image_size
+        self.prompt = nn.Parameter(torch.randn(3, prompt_size, prompt_size))  # Learnable patch
+
+    def forward(self, images):
+        batch_size = images.size(0)
+        for i in range(batch_size):
+            # Randomly select position to insert prompt
+            x_pos = torch.randint(0, self.image_size - self.prompt_size, (1,)).item()
+            y_pos = torch.randint(0, self.image_size - self.prompt_size, (1,)).item()
+            images[i, :, x_pos:x_pos + self.prompt_size, y_pos:y_pos + self.prompt_size] = self.prompt
+        return images
+
+def create_gaussian_target_map(patch_position, token_size, num_tokens):
+    """
+    Creates a Gaussian target map centered around the patch position in token space.
+    """
+    gaussian_map = torch.zeros((num_tokens, num_tokens))
+
+    x_center, y_center = patch_position
+    sigma = token_size / (2 * torch.sqrt(2 * torch.log(torch.tensor(2.0))))
+
+    for i in range(num_tokens):
+        for j in range(num_tokens):
+            gaussian_map[i, j] = torch.exp(-((i - x_center) ** 2 + (j - y_center) ** 2) / (2 * sigma ** 2))
+
+    return gaussian_map
+
+def compute_kl_loss(attention_weights, target_map):
+    """
+    Compute KL-Divergence between attention weights and the Gaussian target map.
+    """
+    attention_probs = nn.functional.softmax(attention_weights, dim=-1)
+    target_probs = nn.functional.softmax(target_map, dim=-1)
+    loss = nn.functional.kl_div(attention_probs.log(), target_probs, reduction='batchmean')
+    return loss
+
+
 class UnimoModel(nn.Module):
-    def __init__(self, vision_config, text_config, add_pooling_layer=True):
+    def __init__(self, vision_config, text_config, add_pooling_layer=True,prompt_size=32):
         #print("Initializng UnimoModel of modelling_unimo.py")
         super(UnimoModel, self).__init__()
         # vision model
@@ -725,6 +768,7 @@ class UnimoModel(nn.Module):
         self.vision_pre_layrnorm = nn.LayerNorm(vision_config.hidden_size)
         self.vision_post_layernorm = nn.LayerNorm(vision_config.hidden_size)
 
+        self.visual_prompt = VisualPrompt(prompt_size, vision_config.image_size)  # 
         # text model
         self.text_config = text_config
         self.text_embeddings = BertEmbeddings(text_config)
@@ -734,7 +778,7 @@ class UnimoModel(nn.Module):
         self.encoder = UnimoEncoder(vision_config, text_config)
 
         self.device = vision_config.device
-
+    
     def forward(
         self,
         input_ids=None,
@@ -749,9 +793,13 @@ class UnimoModel(nn.Module):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        prompt_loss=True
     ):
         #print("Inside forward of UnimoModel of modelling_unimo")
         # pre vision
+        pixel_values = self.visual_prompt(pixel_values)
+        rcnn_values = self.visual_prompt(rcnn_values)
+        aux_values = self.visual_prompt(aux_values)
         vision_embedding_output = self.vision_embeddings(pixel_values, aux_values, rcnn_values)
         vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
 
@@ -791,18 +839,34 @@ class UnimoModel(nn.Module):
         sequence_output = encoder_outputs[0]
         pooled_output = self.text_pooler(sequence_output) if self.text_pooler is not None else None
 
+        kl_loss = None
+        if prompt_loss:
+            # Extract attention weights from vision encoder
+            attention_weights = encoder_outputs.attentions[-1]
+
+            # Get patch position and create target Gaussian map
+            patch_position = (self.visual_prompt.prompt_size // 2, self.visual_prompt.prompt_size // 2)
+            target_map = create_gaussian_target_map(patch_position, self.vision_config.image_size // self.vision_config.num_hidden_layers, self.vision_config.num_hidden_layers)
+
+            # Compute KL loss
+            kl_loss = compute_kl_loss(attention_weights, target_map)
+
         if not return_dict:
-            #print("Exiting forward of UnimoModel of modelling_unimo")
-            return (sequence_output, pooled_output) + encoder_outputs[1:]
-        #print("Inside forward of UnimoModel of modelling_unimo")
-        return BaseModelOutputWithPoolingAndCrossAttention(
+            return (kl_loss, sequence_output, pooled_output) + encoder_outputs[1:]
+        
+        # if not return_dict:
+        #     #print("Exiting forward of UnimoModel of modelling_unimo")
+        #     return (sequence_output, pooled_output) + encoder_outputs[1:]
+        #print("Exiting forward of UnimoModel of modelling_unimo")
+        
+        return BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
-            cross_attentions=encoder_outputs.cross_attentions
+            cross_attentions=encoder_outputs.cross_attentions,
         )
-
+     
     def _init_text_weights(self, module):
         """Initialize the weights"""
         #print("Executing _init_text_weights of UnimoModel of modelling_unimo")
@@ -927,8 +991,8 @@ class UnimoForMaskedLM(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-
-        sequence_output = outputs[0]
+        kl_loss = outputs[0]
+        sequence_output = outputs[1]
         prediction_scores = self.cls(sequence_output)
 
         masked_lm_loss = None
@@ -938,13 +1002,14 @@ class UnimoForMaskedLM(nn.Module):
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
-            return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
+            return ((masked_lm_loss, kl_loss),) + output if masked_lm_loss is not None else output
         #print("Exiting forward of UnimoForMaskedLM of modelling_unimo")
         return MaskedLMOutput(
             loss=masked_lm_loss,
+            kl_loss = kl_loss,
             logits=prediction_scores,
             hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            attentions=outputs.attentions
         )
 
     def get_output_embeddings(self):

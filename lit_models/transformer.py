@@ -67,8 +67,8 @@ class TransformerLitModel(BaseLitModel):
         labels = batch.pop("labels")
         label = batch.pop("label")
         input_ids = batch['input_ids']
-        logits = self.model(**batch, return_dict=True).logits
-        
+        model_output = self.model(**batch, return_dict=True)
+        logits = model_output.logits
         _, mask_idx = (input_ids == self.tokenizer.mask_token_id).nonzero(as_tuple=True)
         bs = input_ids.shape[0]
         mask_logits = logits[torch.arange(bs), mask_idx][:, self.entity_id_st:self.entity_id_ed]
@@ -84,7 +84,7 @@ class TransformerLitModel(BaseLitModel):
         if batch_idx == 0:
             print("Decoded input IDs for first batch:\n" + '\n'.join(self.decode(batch['input_ids'][:4])))
             # print('\n'.join(self.decode(batch['input_ids'][:4])))
-        return loss
+        return (loss + (model_output.loss+model_output.kl_loss))
 
     def _eval(self, batch, batch_idx, ):
         #print(f"Evaluating batch in _eval function of batch {batch_idx} in TransformerLitModel")

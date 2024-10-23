@@ -26,7 +26,7 @@ def acc(logits, labels):
 	#print("Inside acc function in utils.py")
 	preds = np.argmax(logits, axis=-1)
 	return (preds == labels).mean()
-import torch.nn as nn
+import torch.nn as nn0
 import torch
 class LabelSmoothSoftmaxCEV1(nn.Module):
 	'''
