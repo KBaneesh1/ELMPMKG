@@ -851,35 +851,36 @@ class UnimoModel(nn.Module):
 
         kl_loss = None
         if prompt_loss:
-            # Extract attention weights from vision encoder
-            hidden_states = encoder_outputs.hidden_states[-1]
-            _, h , w = hidden_states.shape
-            # Get patch position and create target Gaussian map
+        #     # Extract attention weights from vision encoder
+            v_hidden_states = encoder_outputs.hidden_states[-1].detach().clone()
+            _, h , w = v_hidden_states.shape
+        #     # Get patch position and create target Gaussian map
             patch_position = (self.visual_prompt.prompt_size // 2, self.visual_prompt.prompt_size // 2)
             target_map = create_gaussian_target_map(patch_position, self.vision_config.hidden_size, seq_length)
-            hidden_states = hidden_states.mean(dim=1) 
-            target_map = target_map.to(hidden_states.device)
-            print("Hidden state shape = ",hidden_states.shape )
+            v_hidden_states = v_hidden_states.mean(dim=1)
+            target_map = target_map.to(v_hidden_states.device)
+            # print("Hidden state shape = ",v_hidden_states.shape )
             # target_map = target_map.unsqueeze(1).repeat(1, h, 1)
-            print("Target shape = ",target_map.shape)
-            # Compute KL loss
-            kl_loss = compute_kl_loss(hidden_states, target_map)
+            # print("Target shape = ",target_map.shape)
+        #     # Compute KL loss
+            kl_loss = compute_kl_loss(v_hidden_states, target_map)
 
         if not return_dict:
-            return (kl_loss, sequence_output, pooled_output) + encoder_outputs[1:]
+            print("inside not reutrn dict")
+            return (kl_loss,sequence_output, pooled_output) + encoder_outputs[1:]
         
         # if not return_dict:
         #     #print("Exiting forward of UnimoModel of modelling_unimo")
         #     return (sequence_output, pooled_output) + encoder_outputs[1:]
         #print("Exiting forward of UnimoModel of modelling_unimo")
         
-        return BaseModelOutputWithPoolingAndCrossAttentions(
+        return (kl_loss,BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
             hidden_states=encoder_outputs.hidden_states,
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
-        )
+        ))
      
     def _init_text_weights(self, module):
         """Initialize the weights"""
@@ -992,7 +993,7 @@ class UnimoForMaskedLM(nn.Module):
         labels=None,
     ):
         #print("Inside forward of UnimoForMaskedLM of modelling_unimo")
-        outputs = self.unimo(
+        kl_loss , outputs = self.unimo(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -1005,10 +1006,13 @@ class UnimoForMaskedLM(nn.Module):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-        kl_loss = outputs[0]
-        sequence_output = outputs[1]
+        
+        # print("kl_loss = ",kl_loss.shape)
+        sequence_output = outputs[0]
+        # print("sequence outputs = ",sequence_output.shape)
         prediction_scores = self.cls(sequence_output)
-        total_loss = None
+        # print("Prediction scores = ",prediction_scores.shape)
+        # total_loss = None
         masked_lm_loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
@@ -1018,7 +1022,8 @@ class UnimoForMaskedLM(nn.Module):
             total_loss = kl_loss
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
-            return ((masked_lm_loss, kl_loss),) + output if masked_lm_loss is not None else output
+            # return ((masked_lm_loss, kl_loss),) + output if masked_lm_loss is not None else output
+            return (masked_lm_loss,kl_loss) + output if masked_lm_loss is not None else output
         #print("Exiting forward of UnimoForMaskedLM of modelling_unimo")
         
         return MaskedLMOutput(
