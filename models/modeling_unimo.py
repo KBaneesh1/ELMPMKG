@@ -18,6 +18,9 @@ from transformers.modeling_outputs import (
 )
 from diffusers import StableDiffusionPipeline 
 # some function
+diff_model = StableDiffusionPipeline.from_pretrained(
+            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+        ).vae
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
@@ -35,7 +38,7 @@ def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int],
         """
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        print("Executing get_extended_attention_mask in modelling_unimo.py")
+        #print("Executing get_extended_attention_mask in modelling_unimo.py")
         if attention_mask.dim() == 3:
             extended_attention_mask = attention_mask[:, None, :, :]
         elif attention_mask.dim() == 2:
@@ -76,7 +79,7 @@ def get_head_mask(
             :obj:`torch.Tensor` with shape :obj:`[num_hidden_layers x batch x num_heads x seq_length x seq_length]` or
             list with :obj:`[None]` for each layer.
         """
-        print("Executing get_head_mask modelling_unimo.py")
+        #print("Executing get_head_mask modelling_unimo.py")
         head_mask = [None] * num_hidden_layers
 
         return head_mask
@@ -86,12 +89,12 @@ def get_head_mask(
 class UnimoConfig(PretrainedConfig):
     
     def __init__(self, **kwargs):
-        print("Initializing UnimoConfig")
+        #print("Initializing UnimoConfig")
         super().__init__(**kwargs)
 
 
 class UnimoPreTrainedModel(PreTrainedModel):
-    print("Initializing UnimoPreTrainedModel")
+    #print("Initializing UnimoPreTrainedModel")
     config_class = UnimoConfig 
     base_model_prefix = "clip"
     supports_gradient_checkpointing = True
@@ -103,31 +106,36 @@ class UnimoPreTrainedModel(PreTrainedModel):
 
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config):
-        print("Initializing CLIPVisionEmbeddings in modelling_unimo.py")
+        #print("Initializing CLIPVisionEmbeddings in modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
+        
+        # Load the Stable Diffusion model and extract the VAE
         self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
         ).vae  # Make sure to use a GPU if available
+        
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.stable_diffusion_model.to(device)
-# Extract the VAE encoder part (this is what will generate latent embeddings)
-        # self.vae_encoder = self.stable_diffusion_model.vae
+        self.fc = nn.Linear(28 * 28, self.embed_dim)
+        self.aux_fc = nn.Linear(16*16,self.embed_dim)
+        self.rcnn_fc = nn.Linear(8*8 , self.embed_dim)
         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
 
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
-
+        for param in self.stable_diffusion_model.parameters():  # Unfreeze LDM for fine-tuning
+            param.requires_grad = True
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
 
-        # lilei:
+        # Position embeddings for auxiliary and RCNN
         self.aux_position_embedding = nn.Embedding(48, self.embed_dim)
         self.register_buffer("aux_position_ids", torch.arange(48).expand((1, -1)))
 
@@ -135,60 +143,332 @@ class CLIPVisionEmbeddings(nn.Module):
         self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
 
     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
-        print("Inside forward of CLIPVisionEmbeddings in modelling_unimo.py")
+        #print("Inside forward of CLIPVisionEmbeddings in modelling_unimo.py")
         batch_size = pixel_values.shape[0]
-        patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
-        patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [*, grid*grid, width]
 
-        class_embeds = self.class_embedding.expand(batch_size, 1, -1)
-        # lilei
-        embeddings = patch_embeds
-        # embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
-        # embeddings = embeddings + self.position_embedding(self.position_ids)
-        latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values).latent_dist.sample()
-        latent_pixel_embeddings = latent_pixel_embeddings.flatten(2).transpose(1, 2)
-        embeddings = torch.cat((embeddings, latent_pixel_embeddings), dim=1)  # Concatenate LDM embeddings
+        # Step 1: Generate patch embeddings
+        patch_embeds = self.patch_embedding(pixel_values)  # shape = [batch_size, embed_dim, grid, grid]
+        patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+        
+        # Step 2: Generate latent embeddings for pixel values
+        latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values)
 
+        # Ensure that the latent_pixel_embeddings has a correct shape
+        latent_pixel_embeddings_mean = latent_pixel_embeddings.mean  # Get the mean latent representation
+        # print("Shape of latent_pixel_embeddings_mean:", latent_pixel_embeddings_mean.shape)
 
-        # lilei:
+        # Check total number of elements
+        total_elements = latent_pixel_embeddings_mean.numel()
+        # print("Total elements:", total_elements)
+        # second_dim = None
+    
+        # required_ele = (total_elements // (batch_size * self.embed_dim)) * (batch_size * self.embed_dim)
+        # Calculate the second dimension dynamically
+        # if self.embed_dim == 768:  # Ensure this matches your embedding size
+        # latent_pixel_embeddings_mean = latent_pixel_embeddings_mean[:required_ele]
+        latent_pixel_embeddings_flat = latent_pixel_embeddings_mean.view(batch_size, 4, -1)  # Shape: [64, 4, 784]
+        latent_pixel_embeddings_projected = self.fc(latent_pixel_embeddings_flat)  # Shape: [64, 4, 768]
+
+        # Concatenate CLIP patch embeddings and LDM latent embeddings
+        embeddings = torch.cat((patch_embeds, latent_pixel_embeddings_projected), dim=1)
+        # print("embeddings part 1 = ",embeddings.shape)
+        # Step 3: Process auxiliary embeddings (if they exist)
         if aux_embeddings is not None:
             aux_embeds = []
             for aux_embedding in aux_embeddings:
                 aux_embed = self.patch_embedding(aux_embedding)
-                aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*16, 768 3个子图
-                
-                latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding).latent_dist.sample()
-                latent_aux_embed = latent_aux_embed.flatten(2).transpose(1, 2)
-                aux_embed = torch.cat((aux_embed, latent_aux_embed), dim=1)
+                aux_embed = aux_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+                latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding)
+                latent_aux_embed_mean = latent_aux_embed.mean
+                latent_aux_embed_flat = latent_aux_embed_mean.view(3,4,-1)
+                latent_aux_embed_proj = self.aux_fc(latent_aux_embed_flat)
+                aux_final = torch.cat((aux_embed,latent_aux_embed_proj),dim=1)
+                # print("latent aux shape = ",latent_aux_embed_mean.shape)
+                # print("aux shape = ",aux_embed.shape)
+                # print("before aux_embeds = ", aux_embed.shape)
+                aux_embeds.append(aux_final)
 
-                aux_embeds.append(aux_embed)
-            aux_embeds = torch.stack(aux_embeds) # bsz, 48, 768
-            # aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
-            embeddings = torch.cat((embeddings, aux_embeds), dim=1)
+            aux_embeds = torch.stack(aux_embeds)  # shape: [batch_size, aux_len, num_patches, embed_dim]
+            # print("aux_embeds before reshaping = ", aux_embeds.size())  # E.g., [64, 3, 16, 768]
 
+            # Reshape to [batch_size, x, embed_dim] where x = 3 * 16 = 48
+            batch_size, _, _, embed_dim = aux_embeds.size()
+            aux_embeds = aux_embeds.view(batch_size, -1, embed_dim)  # Flatten [num_aux, num_patches] to [x]
+            # print("aux_embeds after reshaping = ", aux_embeds.size())  # Should print: [64, 48, 768]
+
+            # Concatenate with the main embeddings
+            embeddings = torch.cat((embeddings, aux_embeds), dim=1)  # Concatenate auxiliary embeddings
+
+        # Step 4: Process RCNN embeddings (if they exist)
         if rcnn_embeddings is not None:
             rcnn_embeds = []
             for rcnn_embedding in rcnn_embeddings:
                 rcnn_embed = self.patch_embedding(rcnn_embedding)
-                rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*4, 768 3个子图
+                rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
 
-                latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding).latent_dist.sample()
-                latent_rcnn_embed = latent_rcnn_embed.flatten(2).transpose(1, 2)
-                rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed), dim=1)
-                
+                # Generate latent embeddings for RCNN embeddings
+                latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding)
+                latent_mean_rcnn = latent_rcnn_embed.mean
+                # # latent_mean_rcnn = latent_mean_rcnn[:required_ele]
+                latent_rcnn_embed_flat = latent_mean_rcnn.view(3, 4, -1)  # Shape: [64, 4, 784]
+                latent_rcnn_embed_projected = self.rcnn_fc(latent_rcnn_embed_flat)  # Shape: [64, 4, 768]
+                # print("rcnn shape = ",rcnn_embed.shape)
+                # print("latent rcnn = ",latent_mean_rcnn.shape)
+                # Concatenate RCNN embeddings
+                rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed_projected), dim=1)
                 rcnn_embeds.append(rcnn_embed)
-            rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
-            # rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
-            embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
-        print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
+            # print("rcnn_embeddings = ",rcnn_embeds.size())
+            rcnn_embeds = torch.stack(rcnn_embeds)  # shape: [batch_size, rcnn_len, embed_dim]
+            batch_size, _, _, embed_dim = rcnn_embeds.size()
+            rcnn_embeds = rcnn_embeds.view(batch_size,-1,embed_dim)
+            embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)  # Concatenate RCNN embeddings
+        
+        #print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
         return embeddings
 
+
+
+# class CLIPVisionEmbeddings(nn.Module):
+#     def __init__(self, config):
+#         super().__init__()
+#         self.config = config
+#         self.embed_dim = config.hidden_size  # Should be 768
+#         self.image_size = config.image_size
+#         self.patch_size = config.patch_size
+        
+#         # Load the Stable Diffusion model and extract the VAE
+#         self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
+#             "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+#         ).vae  # Make sure to use a GPU if available
+        
+#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         self.stable_diffusion_model.to(device)
+
+#         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
+
+#         self.patch_embedding = nn.Conv2d(
+#             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
+#         )
+
+#         self.num_patches = (self.image_size // self.patch_size) ** 2
+#         self.num_positions = self.num_patches + 1
+#         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+#         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
+
+#         # Position embeddings for auxiliary and RCNN
+#         self.aux_position_embedding = nn.Embedding(48, self.embed_dim)
+#         self.register_buffer("aux_position_ids", torch.arange(48).expand((1, -1)))
+
+#         self.rcnn_position_embedding = nn.Embedding(12, self.embed_dim)
+#         self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
+
+#     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         # # pixel_values = pixel_values.to(device)
+        
+#         # if aux_embeddings is not None:
+#         #     aux_embeddings = [aux_emb.to(device) for aux_emb in aux_embeddings]
+
+#         # if rcnn_embeddings is not None:
+#         #     rcnn_embeddings = [rcnn_emb.to(device) for rcnn_emb in rcnn_embeddings]
+
+#         batch_size = pixel_values.shape[0]
+
+#         # Step 1: Generate patch embeddings
+#         patch_embeds = self.patch_embedding(pixel_values)  # shape = [batch_size, embed_dim, grid, grid]
+#         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+        
+#         # Step 2: Generate latent embeddings for pixel values
+#         latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values)
+
+#         # Ensure that the latent_pixel_embeddings has a correct shape
+#         latent_pixel_embeddings_mean = latent_pixel_embeddings.mean  # Shape: [64, 4, H, W]
+
+#         # Calculate the input size for the FC layer dynamically
+#         _, channels, height, width = latent_pixel_embeddings_mean.shape  # Shape: [64, 4, H, W]
+#         input_size = height * width  # Total number of spatial features
+
+#         # Reshape using reshape() to handle non-contiguous tensors
+#         latent_pixel_embeddings_flat = latent_pixel_embeddings_mean.reshape(batch_size, channels, -1).to(device)  # Shape: [64, 4, H * W]
+        
+#         # Create a fully connected layer that projects from input_size to self.embed_dim
+#         self.fc = nn.Linear(input_size, self.embed_dim)
+
+#         # Project the flattened embeddings to the target embedding dimension
+#         latent_pixel_embeddings_projected = self.fc(latent_pixel_embeddings_flat)  # Shape: [64, 4, 768]
+#         print("latent projected = ",latent_pixel_embeddings_projected.shape)
+#         # Concatenate CLIP patch embeddings and LDM latent embeddings
+#         embeddings = torch.cat((patch_embeds, latent_pixel_embeddings_projected), dim=1)
+#         print("after cat pixel = ",embeddings.shape)
+#         # Step 3: Process auxiliary embeddings (if they exist)
+#         if aux_embeddings is not None:
+#             aux_embeds = []
+#             for aux_embedding in aux_embeddings:
+#                 aux_embed = self.patch_embedding(aux_embedding)
+#                 aux_embed = aux_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+
+#                 # Generate latent embeddings for auxiliary embeddings
+#                 latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding)
+#                 latent_mean_aux = latent_aux_embed.mean  # Shape: [64, 4, H, W]
+#                 print("shape aux = ",latent_mean_aux.shape)
+#                 # Calculate input size for auxiliary embeddings
+#                 _, aux_channels, aux_height, aux_width = latent_mean_aux.shape
+#                 aux_input_size = aux_height * aux_width  # Total number of spatial features
+
+#                 latent_aux_embed_flat = latent_mean_aux.reshape(batch_size, aux_channels, -1).to(device)  # Shape: [64, 4, H * W]
+                
+#                 # Create a fully connected layer that projects from aux_input_size to self.embed_dim
+#                 aux_fc = nn.Linear(aux_input_size, self.embed_dim)
+#                 latent_aux_embed_projected = aux_fc(latent_aux_embed_flat)  # Shape: [64, 4, 768]
+#                 print("after fc aux = ",latent_aux_embed_projected.shape)
+#                 # Concatenate auxiliary embeddings
+#                 aux_embed = torch.cat((aux_embed, latent_aux_embed_projected), dim=1)
+#                 aux_embeds.append(aux_embed)
+#                 print("after cat aux = ",aux_embed.shape)
+
+
+#             aux_embeds = torch.stack(aux_embeds)  # shape: [batch_size, aux_len, embed_dim]
+#             embeddings = torch.cat((embeddings, aux_embeds), dim=1)  # Concatenate auxiliary embeddings
+
+#         # Step 4: Process RCNN embeddings (if they exist)
+#         if rcnn_embeddings is not None:
+#             rcnn_embeds = []
+#             for rcnn_embedding in rcnn_embeddings:
+#                 rcnn_embed = self.patch_embedding(rcnn_embedding)
+#                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+
+#                 # Generate latent embeddings for RCNN embeddings
+#                 latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding)
+#                 latent_mean_rcnn = latent_rcnn_embed.mean  # Shape: [64, 4, H, W]
+#                 print("before rcnn = ",latent_mean_rcnn.shape)
+#                 # Calculate input size for RCNN embeddings
+#                 _, rcnn_channels, rcnn_height, rcnn_width = latent_mean_rcnn.shape
+#                 rcnn_input_size = rcnn_height * rcnn_width  # Total number of spatial features
+
+#                 latent_rcnn_embed_flat = latent_mean_rcnn.reshape(batch_size, rcnn_channels, -1)  # Shape: [64, 4, H * W]
+#                 latent_rcnn_embed_flat = latent_rcnn_embed_flat.to(device)
+#                 # Create a fully connected layer that projects from rcnn_input_size to self.embed_dim
+#                 rcnn_fc = nn.Linear(rcnn_input_size, self.embed_dim)
+#                 latent_rcnn_embed_projected = rcnn_fc(latent_rcnn_embed_flat)  # Shape: [64, 4, 768]
+#                 print("after latent rcnn = ",latent_rcnn_embed_projected.shape)
+#                 # Concatenate RCNN embeddings
+#                 rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed_projected), dim=1)
+#                 print("after cat rcnn = ",rcnn_embed.shape)
+#                 rcnn_embeds.append(rcnn_embed)
+
+#             rcnn_embeds = torch.stack(rcnn_embeds)  # shape: [batch_size, rcnn_len, embed_dim]
+#             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)  # Concatenate RCNN embeddings
+        
+#         return embeddings
+
+# class CLIPVisionEmbeddings(nn.Module):
+#     def __init__(self, config):
+#         super().__init__()
+#         self.config = config
+#         self.embed_dim = config.hidden_size  # Should be 768
+#         self.image_size = config.image_size
+#         self.patch_size = config.patch_size
+        
+#         # Load the Stable Diffusion model and extract the VAE
+#         self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
+#             "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
+#         ).vae  # Make sure to use a GPU if available
+        
+#         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         self.stable_diffusion_model.to(device)
+
+#         # Fully connected layer to project from 784 (28*28) to 768
+#         self.fc = nn.Linear(28 * 28, self.embed_dim)  # from 784 to 768
+
+#         # Class embedding
+#         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
+
+#         # Patch embedding
+#         self.patch_embedding = nn.Conv2d(
+#             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
+#         )
+
+#         # Position embeddings
+#         self.num_patches = (self.image_size // self.patch_size) ** 2
+#         self.num_positions = self.num_patches + 1
+#         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+#         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
+
+#         # Position embeddings for auxiliary and RCNN
+#         self.aux_position_embedding = nn.Embedding(48, self.embed_dim)
+#         self.register_buffer("aux_position_ids", torch.arange(48).expand((1, -1)))
+
+#         self.rcnn_position_embedding = nn.Embedding(12, self.embed_dim)
+#         self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
+
+#     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+#         batch_size = pixel_values.shape[0]
+
+#         # Step 1: Generate patch embeddings
+#         patch_embeds = self.patch_embedding(pixel_values)  # shape = [batch_size, embed_dim, grid, grid]
+#         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+        
+#         # Step 2: Generate latent embeddings for pixel values
+#         latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values)
+        
+#         # Ensure that the latent_pixel_embeddings has a correct shape
+#         latent_pixel_embeddings_mean = latent_pixel_embeddings.mean  # Get the mean latent representation
+#         print("Shape of latent_pixel_embeddings_mean:", latent_pixel_embeddings_mean.shape)
+
+#         # Reshape using reshape() instead of view() to handle non-contiguous tensors
+#         latent_pixel_embeddings_flat = latent_pixel_embeddings_mean.reshape(batch_size, 4, -1)  # Shape: [64, 4, 784]
+#         latent_pixel_embeddings_projected = self.fc(latent_pixel_embeddings_flat)  # Shape: [64, 4, 768]
+#         print("after shape :", latent_pixel_embeddings_projected.shape)
+#         print("patch embeds = ",patch_embeds.shape)
+#         # Concatenate CLIP patch embeddings and LDM latent embeddings
+#         embeddings = torch.cat((patch_embeds, latent_pixel_embeddings_projected), dim=1)
+#         print("embeddings shape = ",embeddings.shape)
+#         # Step 3: Process auxiliary embeddings (if they exist)
+#         if aux_embeddings is not None:
+#             aux_embeds = []
+#             for aux_embedding in aux_embeddings:
+#                 aux_embed = self.patch_embedding(aux_embedding)
+#                 aux_embed = aux_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+#                 print("aux_patch = ",aux_embed.shape)
+#                 # Generate latent embeddings for auxiliary embeddings
+#                 latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding).mean  # Shape: [64, 4, 28, 28]
+#                 latent_aux_embed_flat = latent_aux_embed.reshape(batch_size, 4, -1)  # Shape: [64, 4, 784]
+#                 print("before fc aux = ",latent_aux_embed_flat.shape)
+#                 latent_aux_embed_projected = self.fc(latent_aux_embed_flat)  # Shape: [64, 4, 768]
+#                 print("after fc aux = ",latent_aux_embed_projected.shape)
+#                 # Concatenate auxiliary embeddings
+#                 aux_embed = torch.cat((aux_embed, latent_aux_embed_projected), dim=1)
+#                 aux_embeds.append(aux_embed)
+#                 print("aux embeddings = ",aux_embed.shape)
+#             aux_embeds = torch.stack(aux_embeds)  # shape: [batch_size, aux_len, embed_dim]
+#             embeddings = torch.cat((embeddings, aux_embeds), dim=1)  # Concatenate auxiliary embeddings
+
+#         # Step 4: Process RCNN embeddings (if they exist)
+#         if rcnn_embeddings is not None:
+#             rcnn_embeds = []
+#             for rcnn_embedding in rcnn_embeddings:
+#                 rcnn_embed = self.patch_embedding(rcnn_embedding)
+#                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
+
+#                 # Generate latent embeddings for RCNN embeddings
+#                 latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding).mean  # Shape: [64, 4, 28, 28]
+#                 latent_rcnn_embed_flat = latent_rcnn_embed.reshape(batch_size, 4, -1)  # Shape: [64, 4, 784]
+#                 latent_rcnn_embed_projected = self.fc(latent_rcnn_embed_flat)  # Shape: [64, 4, 768]
+
+#                 # Concatenate RCNN embeddings
+#                 rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed_projected), dim=1)
+#                 rcnn_embeds.append(rcnn_embed)
+#                 print("rcnn embedding = ",rcnn_embed.shape)
+#             rcnn_embeds = torch.stack(rcnn_embeds)  # shape: [batch_size, rcnn_len, embed_dim]
+#             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)  # Concatenate RCNN embeddings
+#         print("final embeddings = ",embeddings.shape)
+#         return embeddings
 
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
     def __init__(self, config):
-        print("Initializing BertEmbeddings in modelling_unimo.py")
+        #print("Initializing BertEmbeddings in modelling_unimo.py")
         super().__init__()
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
@@ -205,7 +485,7 @@ class BertEmbeddings(nn.Module):
     def forward(
         self, input_ids=None, token_type_ids=None, position_ids=None, inputs_embeds=None, past_key_values_length=0
     ):  
-        print("Inside forward of BertEmbeddings in modelling_unimo.py")
+        #print("Inside forward of BertEmbeddings in modelling_unimo.py")
         if input_ids is not None:
             input_shape = input_ids.size()
         else:
@@ -237,7 +517,7 @@ class BertEmbeddings(nn.Module):
             embeddings += position_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
-        print("Exiting forward of BertEmbeddings in modelling_unimo.py")
+        #print("Exiting forward of BertEmbeddings in modelling_unimo.py")
         return embeddings
 
 
@@ -245,7 +525,7 @@ class CLIPAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
     def __init__(self, config):
-        print("Initializing CLIPAttention of modelling_unimo.py")
+        #print("Initializing CLIPAttention of modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
@@ -272,7 +552,7 @@ class CLIPAttention(nn.Module):
         past_key_values: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-        print("Inside forward of CLIPAttention of modelling_unimo.py")
+        #print("Inside forward of CLIPAttention of modelling_unimo.py")
         bsz, tgt_len, embed_dim = hidden_states.size()
 
         # get query proj
@@ -324,13 +604,13 @@ class CLIPAttention(nn.Module):
         attn_output = attn_output.reshape(bsz, tgt_len, embed_dim)
 
         attn_output = self.out_proj(attn_output)
-        print("Exiting forward of CLIPAttention of modelling_unimo.py")
+        #print("Exiting forward of CLIPAttention of modelling_unimo.py")
         return attn_output, attn_weights_reshaped
 
 
 class CLIPMLP(nn.Module):
     def __init__(self, config):
-        print("Initializing CLIPMPL in modelling_unimo")
+        #print("Initializing CLIPMPL in modelling_unimo")
         super().__init__()
         self.config = config
         self.activation_fn = ACT2FN[config.hidden_act]
@@ -338,7 +618,7 @@ class CLIPMLP(nn.Module):
         self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
     def forward(self, hidden_states):
-        print("Executing forward of CLIPMLP class of modelling_unimo.py")
+        #print("Executing forward of CLIPMLP class of modelling_unimo.py")
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
         hidden_states = self.fc2(hidden_states)
@@ -347,7 +627,7 @@ class CLIPMLP(nn.Module):
 
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
-        print("Initializing BertSelfAttention of modelling_unimo.py")
+        #print("Initializing BertSelfAttention of modelling_unimo.py")
         super().__init__()
         self.num_attention_heads = config.num_attention_heads   # 12
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads) # 64
@@ -361,7 +641,7 @@ class BertSelfAttention(nn.Module):
         self.fusion = BertFusion(config)    # 
 
     def transpose_for_scores(self, x):
-        print("Executing transpose_for_scores of BertSelfAttention of modelling_unimo.py")
+        #print("Executing transpose_for_scores of BertSelfAttention of modelling_unimo.py")
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
@@ -376,7 +656,7 @@ class BertSelfAttention(nn.Module):
         output_qks=None,
     ):
         mixed_query_layer = self.query(hidden_states)
-        print("Inside forward of BertSelfAttention of modelling_unimo.py")
+        #print("Inside forward of BertSelfAttention of modelling_unimo.py")
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
@@ -411,20 +691,20 @@ class BertSelfAttention(nn.Module):
         fusion_output = self.fusion(context_layer, visual_hidden_state) if visual_hidden_state is not None else None # add
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
-        print("Exiting forward of BertSelfAttention of modelling_unimo.py")
+        #print("Exiting forward of BertSelfAttention of modelling_unimo.py")
         return outputs, fusion_output, qks
 
 
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
-        print("Initializing BertSelfOutput of modelling_unimo.py")
+        #print("Initializing BertSelfOutput of modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
-        print("Executing forward of BertSelfOutput of modelling_unimo.py")
+        #print("Executing forward of BertSelfOutput of modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -433,7 +713,7 @@ class BertSelfOutput(nn.Module):
 
 class BertFusion(nn.Module):
     def __init__(self, config):
-        print("Initializing BertFusion of modelling_unimo.py")
+        #print("Initializing BertFusion of modelling_unimo.py")
         super().__init__()
         # self.fusion_function = config.fusion_function
         self.fusion_function = 'softmax'
@@ -444,7 +724,7 @@ class BertFusion(nn.Module):
         visual_hidden_state=None,
     ):
         # lilei: fusion
-        print("Executing forward of modelling_unimo.py")
+        #print("Executing forward of modelling_unimo.py")
         fusion_scores = torch.matmul(hidden_states, visual_hidden_state.transpose(-1, -2))  # bsz, 128, 49
         # if attention_mask is not None:
         #     # attention_mask: bsz, 1, 1, 128; fusion_scores: bsz, 128, 49
@@ -459,7 +739,7 @@ class BertFusion(nn.Module):
 
 class BertAttention(nn.Module):
     def __init__(self, config):
-        print("Initializng BertAttention modelling_unimo.py")
+        #print("Initializng BertAttention modelling_unimo.py")
         super().__init__()
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
@@ -474,7 +754,7 @@ class BertAttention(nn.Module):
         visual_hidden_state=None,
         output_qks=None,
     ):
-        print("Executing forward of BertAttention of modelling_unimo.py")
+        #print("Executing forward of BertAttention of modelling_unimo.py")
         self_outputs, fusion_output, qks = self.self(
             hidden_states,
             attention_mask,
@@ -490,7 +770,7 @@ class BertAttention(nn.Module):
 
 class BertIntermediate(nn.Module):
     def __init__(self, config):
-        print("Initializing BertIntermediate of modelling_unimo.py")
+        #print("Initializing BertIntermediate of modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
         self.fusion_dense = nn.Linear(config.hidden_size, config.intermediate_size)
@@ -500,7 +780,7 @@ class BertIntermediate(nn.Module):
             self.intermediate_act_fn = config.hidden_act
 
     def forward(self, hidden_states, fusion_output=None):
-        print("Executing forward of BertIntermediate of modelling_unimo.py")
+        #print("Executing forward of BertIntermediate of modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         if fusion_output is not None:
             fusion_states = self.fusion_dense(fusion_output)
@@ -511,14 +791,14 @@ class BertIntermediate(nn.Module):
 
 class BertOutput(nn.Module):
     def __init__(self, config):
-        print("Initialzing BertOutput modelling_unimo.py")
+        #print("Initialzing BertOutput modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
-        print("Inside forward of BertOutput modelling_unimo.py")
+        #print("Inside forward of BertOutput modelling_unimo.py")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -527,7 +807,7 @@ class BertOutput(nn.Module):
 
 class CLIPEncoderLayer(nn.Module):
     def __init__(self, config):
-        print("Initialzing CLIPEncoderLayer modelling_unimo.py")
+        #print("Initialzing CLIPEncoderLayer modelling_unimo.py")
         super().__init__()
         self.embed_dim = config.hidden_size
         self.self_attn = CLIPAttention(config)
@@ -552,7 +832,7 @@ class CLIPEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under
                 returned tensors for more detail.
         """
-        print("Inside forward of CLIPEncoderLayer of modelling_unimo.py")
+        #print("Inside forward of CLIPEncoderLayer of modelling_unimo.py")
         residual = hidden_states
 
         hidden_states = self.layer_norm1(hidden_states)
@@ -572,13 +852,13 @@ class CLIPEncoderLayer(nn.Module):
 
         if output_attentions:
             outputs += (attn_weights,)
-        print("exiting forward of CLIPEncoderLayer of modelling_unimo.py")
+        #print("exiting forward of CLIPEncoderLayer of modelling_unimo.py")
         return outputs
 
 
 class BertLayer(nn.Module):
     def __init__(self, config):
-        print("Initializing BertLayer in modelling_unimo.py")
+        #print("Initializing BertLayer in modelling_unimo.py")
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
@@ -598,7 +878,7 @@ class BertLayer(nn.Module):
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         # self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
-        print("Inside forward of BertLayer in modelling_unimo.py")
+        #print("Inside forward of BertLayer in modelling_unimo.py")
         self_attention_outputs, fusion_output, qks = self.attention(
             hidden_states,
             attention_mask,
@@ -617,11 +897,11 @@ class BertLayer(nn.Module):
         outputs = (layer_output,) + outputs
         if output_qks: 
             outputs += (qks,)
-        print("Exiting forward of BertLayer in modelling_unimo.py")
+        #print("Exiting forward of BertLayer in modelling_unimo.py")
         return outputs
 
     def feed_forward_chunk(self, attention_output, fusion_output):
-        print("Executing feed_forward_chunk of BertLayer in modelling_unimo.py")
+        #print("Executing feed_forward_chunk of BertLayer in modelling_unimo.py")
         intermediate_output = self.intermediate(attention_output, fusion_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
@@ -629,7 +909,7 @@ class BertLayer(nn.Module):
 
 class UnimoEncoder(nn.Module):
     def __init__(self, vision_config, text_config):
-        print("Initializing UnimoEncoder of modelling_unimo")
+        #print("Initializing UnimoEncoder of modelling_unimo")
         super().__init__()
         self.vision_config = vision_config
         self.text_config = text_config
@@ -647,7 +927,7 @@ class UnimoEncoder(nn.Module):
         output_hidden_states=None,
         return_dict=None,
     ):
-        print("Inside forward of UnimoEncoder of modelling_unimo")
+        #print("Inside forward of UnimoEncoder of modelling_unimo")
         assert self.vision_config.num_hidden_layers == self.text_config.num_hidden_layers
 
         all_vision_hidden_states = () if output_hidden_states else None
@@ -697,14 +977,14 @@ class UnimoEncoder(nn.Module):
                 all_text_hidden_states = all_text_hidden_states + (text_hidden_states, )
         
         if not return_dict:
-            print("Exiting forward of UnimoEncoder of modelling_unimo")
+            #print("Exiting forward of UnimoEncoder of modelling_unimo")
             return tuple(
                 v for v in [
                     text_hidden_states,
                     all_text_hidden_states,
                     all_text_attentions,
                 ] if v is not None)
-        print("Exiting forward of UnimoEncoder of modelling_unimo")
+        #print("Exiting forward of UnimoEncoder of modelling_unimo")
         return BaseModelOutput(
             last_hidden_state=text_hidden_states, hidden_states=all_text_hidden_states, attentions=all_text_attentions
         )
@@ -712,7 +992,7 @@ class UnimoEncoder(nn.Module):
 
 class BertPooler(nn.Module):
     def __init__(self, config):
-        print("Initializg BertPooler in modelling_unimo.py")
+        #print("Initializg BertPooler in modelling_unimo.py")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
@@ -720,7 +1000,7 @@ class BertPooler(nn.Module):
     def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
-        print("executing forward of BertPooler in modelling_unimo.py")
+        #print("executing forward of BertPooler in modelling_unimo.py")
         first_token_tensor = hidden_states[:, 0]
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
@@ -729,7 +1009,7 @@ class BertPooler(nn.Module):
 
 class UnimoModel(nn.Module):
     def __init__(self, vision_config, text_config, add_pooling_layer=True):
-        print("Initializng UnimoModel of modelling_unimo.py")
+        #print("Initializng UnimoModel of modelling_unimo.py")
         super(UnimoModel, self).__init__()
         # vision model
         self.vision_config = vision_config
@@ -762,7 +1042,7 @@ class UnimoModel(nn.Module):
         output_hidden_states=None,
         return_dict=None,
     ):
-        print("Inside forward of UnimoModel of modelling_unimo")
+        #print("Inside forward of UnimoModel of modelling_unimo")
         # pre vision
         vision_embedding_output = self.vision_embeddings(pixel_values, aux_values, rcnn_values)
         vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
@@ -804,9 +1084,9 @@ class UnimoModel(nn.Module):
         pooled_output = self.text_pooler(sequence_output) if self.text_pooler is not None else None
 
         if not return_dict:
-            print("Exiting forward of UnimoModel of modelling_unimo")
+            #print("Exiting forward of UnimoModel of modelling_unimo")
             return (sequence_output, pooled_output) + encoder_outputs[1:]
-        print("Inside forward of UnimoModel of modelling_unimo")
+        #print("Inside forward of UnimoModel of modelling_unimo")
         return BaseModelOutputWithPooling(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
@@ -816,7 +1096,7 @@ class UnimoModel(nn.Module):
 
     def _init_text_weights(self, module):
         """Initialize the weights"""
-        print("Executing _init_text_weights of UnimoModel of modelling_unimo")
+        #print("Executing _init_text_weights of UnimoModel of modelling_unimo")
         if isinstance(module, nn.Linear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -832,15 +1112,15 @@ class UnimoModel(nn.Module):
             module.weight.data.fill_(1.0)
 
     def get_input_embeddings(self):
-        print("Executing get_input_embeddings of UnimoModel of modelling_unimo")
+        #print("Executing get_input_embeddings of UnimoModel of modelling_unimo")
         return self.text_embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
-        print("Executing set_input_embeddings of UnimoModel of modelling_unimo")
+        #print("Executing set_input_embeddings of UnimoModel of modelling_unimo")
         self.text_embeddings.word_embeddings = value
 
     def resize_token_embeddings(self, new_num_tokens):
-        print("Executing resize_token_embeddings of UnimoModel of modelling_unimo")
+        #print("Executing resize_token_embeddings of UnimoModel of modelling_unimo")
         old_embeddings = self.get_input_embeddings()
         new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
         self.set_input_embeddings(new_embeddings)
@@ -866,7 +1146,7 @@ class UnimoModel(nn.Module):
             :obj:`torch.nn.Embedding`: Pointer to the resized Embedding Module or the old Embedding Module if
             :obj:`new_num_tokens` is :obj:`None`
         """
-        print("Inside _get_resized_embeddings of UnimoModel of modelling_unimo")
+        #print("Inside _get_resized_embeddings of UnimoModel of modelling_unimo")
         if new_num_tokens is None:
             return old_embeddings
         else:
@@ -894,13 +1174,13 @@ class UnimoModel(nn.Module):
         # numbers of tokens to copy
         n = min(old_num_tokens, new_num_tokens)
         new_embeddings.weight.data[:n, :] = old_embeddings.weight.data[:n, :]
-        print("Exiting _get_resized_embeddings of UnimoModel of modelling_unimo")
+        #print("Exiting _get_resized_embeddings of UnimoModel of modelling_unimo")
         return new_embeddings
 
         
 class UnimoForMaskedLM(nn.Module):
     def __init__(self, vision_config, text_config):
-        print("Initializing UnimoForMaskedLM in modelling_unimo")
+        #print("Initializing UnimoForMaskedLM in modelling_unimo")
         super().__init__()
         self.unimo = UnimoModel(vision_config, text_config)
         self.cls = UnimoOnlyMLMHead(text_config)
@@ -924,7 +1204,7 @@ class UnimoForMaskedLM(nn.Module):
         return_dict=None,
         labels=None,
     ):
-        print("Inside forward of UnimoForMaskedLM of modelling_unimo")
+        #print("Inside forward of UnimoForMaskedLM of modelling_unimo")
         outputs = self.unimo(
             input_ids,
             attention_mask=attention_mask,
@@ -950,7 +1230,7 @@ class UnimoForMaskedLM(nn.Module):
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
-        print("Exiting forward of UnimoForMaskedLM of modelling_unimo")
+        #print("Exiting forward of UnimoForMaskedLM of modelling_unimo")
         return MaskedLMOutput(
             loss=masked_lm_loss,
             logits=prediction_scores,
@@ -959,21 +1239,21 @@ class UnimoForMaskedLM(nn.Module):
         )
 
     def get_output_embeddings(self):
-        print("Executing get_output_embeddings of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing get_output_embeddings of UnimoForMaskedLM of modelling_unimo")
         return self.cls.predictions.decoder
 
     def set_output_embeddings(self, new_embeddings):
-        print("Executing set_output_embeddings of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing set_output_embeddings of UnimoForMaskedLM of modelling_unimo")
         self.cls.predictions.decoder = new_embeddings
 
     def tie_weights(self):
-        print("Executing tie_weights of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing tie_weights of UnimoForMaskedLM of modelling_unimo")
         output_embeddings = self.get_output_embeddings()
         self._tie_or_clone_weights(output_embeddings, self.unimo.get_input_embeddings())
 
     def _tie_or_clone_weights(self, output_embeddings, input_embeddings):
         """Tie or clone module weights depending of whether we are using TorchScript or not"""
-        print("Executing _tie_or_clone_weights of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing _tie_or_clone_weights of UnimoForMaskedLM of modelling_unimo")
         if self.config.torchscript:
             output_embeddings.weight = nn.Parameter(input_embeddings.weight.clone())
         else:
@@ -993,25 +1273,25 @@ class UnimoForMaskedLM(nn.Module):
             output_embeddings.out_features = input_embeddings.num_embeddings
 
     def resize_token_embeddings(self, new_num_tokens):
-        print("Executing resize_token_embeddings of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing resize_token_embeddings of UnimoForMaskedLM of modelling_unimo")
         self.unimo.resize_token_embeddings(new_num_tokens)
         self.tie_weights()
 
 class UnimoOnlyMLMHead(nn.Module):
     def __init__(self, config):
-        print("Initializing UniomoOnlyMLMHead of modeling_unimo")
+        #print("Initializing UniomoOnlyMLMHead of modeling_unimo")
         super().__init__()
         self.predictions = UnimoLMPredictionHead(config)
 
     def forward(self, sequence_output):
-        print("Executing forward of UnimoForMaskedLM of modelling_unimo")
+        #print("Executing forward of UnimoForMaskedLM of modelling_unimo")
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
 
 class UnimoLMPredictionHead(nn.Module):
     def __init__(self, config):
-        print("Initializing UnimoLMPredictionHead of modeling_unimo")
+        #print("Initializing UnimoLMPredictionHead of modeling_unimo")
         super().__init__()
         self.transform = BertPredictionHeadTransform(config)
 
@@ -1025,7 +1305,7 @@ class UnimoLMPredictionHead(nn.Module):
         self.decoder.bias = self.bias
 
     def forward(self, hidden_states):
-        print("Executing forward of UnimoLMPredictionHead of modelling_unimo")
+        #print("Executing forward of UnimoLMPredictionHead of modelling_unimo")
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states)
         return hidden_states
@@ -1033,7 +1313,7 @@ class UnimoLMPredictionHead(nn.Module):
 
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
-        print("Initializing BertPredictionHeadTransform of modeling_unimo")
+        #print("Initializing BertPredictionHeadTransform of modeling_unimo")
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         if isinstance(config.hidden_act, str):
@@ -1043,7 +1323,7 @@ class BertPredictionHeadTransform(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
-        print("Executing forward of BertPredictionHeadTransform of modelling_unimo")
+        #print("Executing forward of BertPredictionHeadTransform of modelling_unimo")
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
         hidden_states = self.LayerNorm(hidden_states)
