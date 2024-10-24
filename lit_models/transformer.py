@@ -84,7 +84,7 @@ class TransformerLitModel(BaseLitModel):
         if batch_idx == 0:
             print("Decoded input IDs for first batch:\n" + '\n'.join(self.decode(batch['input_ids'][:4])))
             # print('\n'.join(self.decode(batch['input_ids'][:4])))
-        return (loss + (model_output.loss+model_output.kl_loss))
+        return (loss + model_output.loss)
 
     def _eval(self, batch, batch_idx, ):
         #print(f"Evaluating batch in _eval function of batch {batch_idx} in TransformerLitModel")
