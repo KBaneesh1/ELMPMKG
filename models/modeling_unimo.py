@@ -324,6 +324,37 @@ class CLIPMLP(nn.Module):
         hidden_states = self.fc2(hidden_states)
         return hidden_states
 
+class AdaptiveSpan(nn.Module):
+    print("Inside the adaptiveSpan class of modelling_unimo.py")
+    def __init__(self, max_span, attn_span, adapt_span_loss_coeff):
+        super().__init__()
+        self.max_span = max_span
+        self.attn_span = attn_span
+        self.adapt_span_loss_coeff = adapt_span_loss_coeff
+        self.span_log_alpha = nn.Parameter(torch.zeros(1))
+
+    def forward(self, attn):
+        span_mask = self.get_span_mask()
+        attn = attn * span_mask
+        return attn
+
+    def get_span_mask(self):
+        span_mask = torch.cumsum(self.span_softmax(), dim=-1)
+        span_mask = torch.clamp(span_mask, 0.0, 1.0)
+        return span_mask
+
+    def span_softmax(self):
+        return torch.softmax(self.span_log_alpha, dim=-1)
+
+    def get_loss(self):
+        return self.adapt_span_loss_coeff * (self.attn_span - self.span_softmax().sum())
+
+    def get_current_max_span(self):
+        return (self.span_softmax() > 0.0).sum()
+
+    def clamp_param(self):
+        self.span_log_alpha.data = torch.clamp(self.span_log_alpha.data, 0.0, self.max_span)
+
 
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
@@ -339,6 +370,11 @@ class BertSelfAttention(nn.Module):
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.fusion = BertFusion(config)    # 
+        self.adaptive_span = AdaptiveSpan(
+            max_span=config.max_position_embeddings,
+            attn_span=config.attention_window,
+            adapt_span_loss_coeff=config.adapt_span_loss_coeff
+        )
 
     def transpose_for_scores(self, x):
         print("Executing transpose_for_scores of BertSelfAttention of modelling_unimo.py")
@@ -373,7 +409,10 @@ class BertSelfAttention(nn.Module):
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
         # Normalize the attention scores to probabilities.
+
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        
+        attention_probs = self.adaptive_span(attention_probs)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
@@ -393,6 +432,9 @@ class BertSelfAttention(nn.Module):
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
         print("Exiting forward of BertSelfAttention of modelling_unimo.py")
         return outputs, fusion_output, qks
+    
+    def get_adaptive_span_loss(self):
+        return self.adaptive_span.get_loss()
 
 
 class BertSelfOutput(nn.Module):
@@ -588,13 +630,14 @@ class BertLayer(nn.Module):
             output_qks=output_qks,
         )
         attention_output = self_attention_outputs[0]
+        adaptive_span_loss = self.self.adaptive_span.get_loss()
 
         outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
 
         layer_output = apply_chunking_to_forward(
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, attention_output, fusion_output
         )
-        outputs = (layer_output,) + outputs
+        outputs = (layer_output, adaptive_span_loss) + outputs
         if output_qks: 
             outputs += (qks,)
         print("Exiting forward of BertLayer in modelling_unimo.py")
@@ -926,6 +969,10 @@ class UnimoForMaskedLM(nn.Module):
         if labels is not None:
             loss_fct = CrossEntropyLoss()  # -100 index = padding token
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+
+            # adaptive span loss
+            adaptive_span_loss = sum(output[1] for output in outputs[1] if isinstance(output, tuple) and len(output) > 1)
+            masked_lm_loss += adaptive_span_loss
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
