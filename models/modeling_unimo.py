@@ -85,9 +85,11 @@ def get_head_mask(
 # models
 class UnimoConfig(PretrainedConfig):
     
-    def __init__(self, **kwargs):
+    def __init__(self, attention_window=512, adapt_span_loss_coeff=0.000005, **kwargs):
         print("Initializing UnimoConfig")
         super().__init__(**kwargs)
+        self.attention_window = attention_window
+        self.adapt_span_loss_coeff = adapt_span_loss_coeff
 
 
 class UnimoPreTrainedModel(PreTrainedModel):
