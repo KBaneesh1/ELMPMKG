@@ -6,7 +6,7 @@ torchvision==0.8.2
 scikit-learn==1.0
 numpy>=1.21
 tokenizers==0.10.3
-pytorch_lightning==1.4.9
+pytorch_lightning==1.4.0
 regex==2021.4.4
 torch==1.9.1
 tqdm==4.49.0
