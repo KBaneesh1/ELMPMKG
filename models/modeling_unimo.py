@@ -16,11 +16,10 @@ from transformers.modeling_outputs import (
     MaskedLMOutput,
     BaseModelOutputWithPooling,
 )
-from diffusers import StableDiffusionPipeline 
+from diffusers import StableDiffusionPipeline
+from vqvae import VQVAE
 # some function
-diff_model = StableDiffusionPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
-        ).vae
+
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
@@ -112,17 +111,16 @@ class CLIPVisionEmbeddings(nn.Module):
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
-        
+        # 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
         # Load the Stable Diffusion model and extract the VAE
-        self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
-        ).vae  # Make sure to use a GPU if available
-        
+        self.vqvae_model = VQVAE()
+        vqvae_latent_dim = self.vqvae_model.latent_dim
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.stable_diffusion_model.to(device)
-        self.fc = nn.Linear(28 * 28, self.embed_dim)
-        self.aux_fc = nn.Linear(16*16,self.embed_dim)
-        self.rcnn_fc = nn.Linear(8*8 , self.embed_dim)
+        # self.fc = nn.Linear(28 * 28, self.embed_dim)
+        # self.aux_fc = nn.Linear(16*16,self.embed_dim)
+        # self.rcnn_fc = nn.Linear(8*8 , self.embed_dim)
+        self.fc = nn.Linear(vqvae_latent_dim, self.embed_dim)
         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
 
         self.patch_embedding = nn.Conv2d(
@@ -150,27 +148,12 @@ class CLIPVisionEmbeddings(nn.Module):
         patch_embeds = self.patch_embedding(pixel_values)  # shape = [batch_size, embed_dim, grid, grid]
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
         
-        # Step 2: Generate latent embeddings for pixel values
-        latent_pixel_embeddings = self.stable_diffusion_model.encode(pixel_values)
-
-        # Ensure that the latent_pixel_embeddings has a correct shape
-        latent_pixel_embeddings_mean = latent_pixel_embeddings.mean  # Get the mean latent representation
-        # print("Shape of latent_pixel_embeddings_mean:", latent_pixel_embeddings_mean.shape)
-
-        # Check total number of elements
-        total_elements = latent_pixel_embeddings_mean.numel()
-        # print("Total elements:", total_elements)
-        # second_dim = None
-    
-        # required_ele = (total_elements // (batch_size * self.embed_dim)) * (batch_size * self.embed_dim)
-        # Calculate the second dimension dynamically
-        # if self.embed_dim == 768:  # Ensure this matches your embedding size
-        # latent_pixel_embeddings_mean = latent_pixel_embeddings_mean[:required_ele]
-        latent_pixel_embeddings_flat = latent_pixel_embeddings_mean.view(batch_size, 4, -1)  # Shape: [64, 4, 784]
-        latent_pixel_embeddings_projected = self.fc(latent_pixel_embeddings_flat)  # Shape: [64, 4, 768]
+        vqvae_latent = self.vqvae_model.encode(pixel_values)  # Shape: [batch_size, latent_dim]
+        vqvae_flat = vqvae_latent.view(batch_size, -1)  # Flatten if needed 
+        vqvae_embedded = self.fc(vqvae_flat).view(batch_size, -1, self.embed_dim) # Shape: [64, 4, 768]
 
         # Concatenate CLIP patch embeddings and LDM latent embeddings
-        embeddings = torch.cat((patch_embeds, latent_pixel_embeddings_projected), dim=1)
+        embeddings = torch.cat((patch_embeds, vqvae_embedded), dim=1)
         # print("embeddings part 1 = ",embeddings.shape)
         # Step 3: Process auxiliary embeddings (if they exist)
         if aux_embeddings is not None:
@@ -178,11 +161,10 @@ class CLIPVisionEmbeddings(nn.Module):
             for aux_embedding in aux_embeddings:
                 aux_embed = self.patch_embedding(aux_embedding)
                 aux_embed = aux_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
-                latent_aux_embed = self.stable_diffusion_model.encode(aux_embedding)
-                latent_aux_embed_mean = latent_aux_embed.mean
-                latent_aux_embed_flat = latent_aux_embed_mean.view(3,4,-1)
-                latent_aux_embed_proj = self.aux_fc(latent_aux_embed_flat)
-                aux_final = torch.cat((aux_embed,latent_aux_embed_proj),dim=1)
+                vqvae_aux = self.vqvau_model.encode(aux_embedding)
+                vqvae_aux_flat = vqvae_aux.view(batch_size)
+                vqvae_aux_embed = self.fc(vqvae_aux_flat).view(batch_size,-1,self.embed_dim)
+                aux_final = torch.cat((aux_embed,vqvae_aux_embed),dim=1)
                 # print("latent aux shape = ",latent_aux_embed_mean.shape)
                 # print("aux shape = ",aux_embed.shape)
                 # print("before aux_embeds = ", aux_embed.shape)
@@ -206,16 +188,17 @@ class CLIPVisionEmbeddings(nn.Module):
                 rcnn_embed = self.patch_embedding(rcnn_embedding)
                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
 
-                # Generate latent embeddings for RCNN embeddings
-                latent_rcnn_embed = self.stable_diffusion_model.encode(rcnn_embedding)
-                latent_mean_rcnn = latent_rcnn_embed.mean
+                
                 # # latent_mean_rcnn = latent_mean_rcnn[:required_ele]
-                latent_rcnn_embed_flat = latent_mean_rcnn.view(3, 4, -1)  # Shape: [64, 4, 784]
-                latent_rcnn_embed_projected = self.rcnn_fc(latent_rcnn_embed_flat)  # Shape: [64, 4, 768]
+                vqvae_rcnn = self.vqvae_model(rcnn_embedding)
+                vqvae_rcnn_flat = vqvae_rcnn.view(batch_size, -1)
+                vqvae_rcnn_embed = self.fc(vqvae_rcnn_flat).view(batch_size,-1)
+                # print("rcnn latent shape = ",vqvae_rcnn_embed.shape)
+                rcnn_final = torch.cat((rcnn_embed,vqvae_rcnn_embed),dim=1)
                 # print("rcnn shape = ",rcnn_embed.shape)
                 # print("latent rcnn = ",latent_mean_rcnn.shape)
                 # Concatenate RCNN embeddings
-                rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed_projected), dim=1)
+                # rcnn_embed = torch.cat((rcnn_embed, latent_rcnn_embed_projected), dim=1)
                 rcnn_embeds.append(rcnn_embed)
             # print("rcnn_embeddings = ",rcnn_embeds.size())
             rcnn_embeds = torch.stack(rcnn_embeds)  # shape: [batch_size, rcnn_len, embed_dim]

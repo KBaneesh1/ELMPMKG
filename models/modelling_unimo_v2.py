@@ -112,7 +112,7 @@ class CLIPVisionEmbeddings(nn.Module):
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
-        
+        # stabilityai/stable-diffusion-3-medium-diffusers
         # Load the Stable Diffusion model and extract the VAE
         self.stable_diffusion_model = StableDiffusionPipeline.from_pretrained(
             "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
