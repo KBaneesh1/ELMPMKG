@@ -17,7 +17,7 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPooling,
 )
 from diffusers import StableDiffusionPipeline
-from vq_vae_2_pytorch.vqvae import VQVAE
+from vqvae import VQVAE
 # some function
 
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
