@@ -113,16 +113,15 @@ class CLIPVisionEmbeddings(nn.Module):
         self.patch_size = config.patch_size
         # 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
         # Load the Stable Diffusion model and extract the VAE
-        self.vqvae_model = VQVAE()
-        vqvae_latent_dim = self.vqvae_model.latent_dim
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.vqvae_model.to(device)
-        # self.fc = nn.Linear(28 * 28, self.embed_dim)
-        # self.aux_fc = nn.Linear(16*16,self.embed_dim)
-        # self.rcnn_fc = nn.Linear(8*8 , self.embed_dim)
-        self.fc = nn.Linear(vqvae_latent_dim, self.embed_dim)
-        self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
+        self.vqvae_model = VQVAE()  # Initialize with the actual VQ-VAE-2 model
 
+        # Determine the latent dimension by passing a sample image
+        dummy_input = torch.randn(1, 3, self.image_size, self.image_size)  # Example image of the same size
+        vqvae_latent = self.vqvae_model.encode(dummy_input)  # Pass the dummy input through VQ-VAE
+        self.vqvae_latent_dim = vqvae_latent.shape[1]  # Set latent dimension based on output shape
+
+        # Fully connected layer to project VQ-VAE-2 embeddings to the target embedding dimension
+        self.fc = nn.Linear(self.vqvae_latent_dim, self.embed_dim)
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
@@ -149,6 +148,7 @@ class CLIPVisionEmbeddings(nn.Module):
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [batch_size, num_patches, embed_dim]
         
         vqvae_latent = self.vqvae_model.encode(pixel_values)  # Shape: [batch_size, latent_dim]
+        
         vqvae_flat = vqvae_latent.view(batch_size, -1)  # Flatten if needed 
         vqvae_embedded = self.fc(vqvae_flat).view(batch_size, -1, self.embed_dim) # Shape: [64, 4, 768]
 
