@@ -116,7 +116,7 @@ class CLIPVisionEmbeddings(nn.Module):
         self.vqvae_model = VQVAE()
         vqvae_latent_dim = self.vqvae_model.latent_dim
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.stable_diffusion_model.to(device)
+        self.vqvae_model.to(device)
         # self.fc = nn.Linear(28 * 28, self.embed_dim)
         # self.aux_fc = nn.Linear(16*16,self.embed_dim)
         # self.rcnn_fc = nn.Linear(8*8 , self.embed_dim)
