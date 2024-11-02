@@ -18,9 +18,7 @@ from transformers.modeling_outputs import (
 )
 from diffusers import StableDiffusionPipeline 
 # some function
-diff_model = StableDiffusionPipeline.from_pretrained(
-            "CompVis/stable-diffusion-v1-4", revision="fp16", torch_dtype=torch.float16
-        ).vae
+
 def get_extended_attention_mask(attention_mask: Tensor, input_shape: Tuple[int], device: device) -> Tensor:
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
