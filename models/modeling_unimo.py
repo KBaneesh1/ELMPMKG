@@ -128,8 +128,8 @@ class CLIPVisionEmbeddings(nn.Module):
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
-        for param in self.stable_diffusion_model.parameters():  # Unfreeze LDM for fine-tuning
-            param.requires_grad = True
+        # for param in self.stable_diffusion_model.parameters():  # Unfreeze LDM for fine-tuning
+        #     param.requires_grad = True
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
