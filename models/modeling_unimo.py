@@ -103,7 +103,7 @@ class UnimoPreTrainedModel(PreTrainedModel):
 class ConvVAE(nn.Module):
     def __init__(self, in_channels=3, latent_dim=256, hidden_dims=[32, 64, 128, 256]):
         super(ConvVAE, self).__init__()
-        
+        print("Iniside init of VAE")
         # Encoder: Convolutional layers to encode images into a latent space
         modules = []
         for h_dim in hidden_dims:
@@ -136,70 +136,153 @@ class ConvVAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         return z
         
+# class CLIPVisionEmbeddings(nn.Module):
+#     def __init__(self, config):
+#         super().__init__()
+#         self.config = config
+#         self.embed_dim = config.hidden_size
+#         self.image_size = config.image_size
+#         self.patch_size = config.patch_size
+
+#         # Initialize ConvVAE for generating image embeddings
+#         self.vae = ConvVAE(in_channels=3, latent_dim=self.embed_dim)
+
+#         # Patch embedding and position embeddings
+#         self.patch_embedding = nn.Conv2d(
+#             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
+#         )
+#         self.num_patches = (self.image_size // self.patch_size) ** 2
+#         self.num_positions = self.num_patches + 1
+#         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
+#         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
+
+#     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+#         batch_size = pixel_values.shape[0]
+
+#         # VAE-based embeddings
+#         vae_embeds = self.vae(pixel_values)  # Get latent representation from ConvVAE
+#         vae_embeds = vae_embeds.view(batch_size, -1, self.embed_dim)  # Reshape to fit expected input dimensions
+
+#         # Patch embeddings for main input
+#         patch_embeds = self.patch_embedding(pixel_values).flatten(2).transpose(1, 2)
+
+#         # Concatenate VAE embeddings with patch embeddings
+#         embeddings = torch.cat((patch_embeds, vae_embeds), dim=1)
+#         # embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
+#         # embeddings = embeddings + self.position_embedding(self.position_ids)
+
+#         # lilei:
+#         if aux_embeddings is not None:
+#             aux_embeds = []
+#             for aux_embedding in aux_embeddings:
+#                 aux_embed = self.patch_embedding(aux_embedding)
+#                 aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*16, 768 3个子图
+#                 aux_vae_embeds = self.vae(aux_embedding)
+#                 aux_vae_embeds = aux_vae_embeds.view(batch_size, -1, self.embed_dim)
+#                 aux_embeds.append(torch.cat((aux_embed, aux_vae_embeds), dim=1))
+#                 # aux_embeds.append(aux_embed)
+#             aux_embeds = torch.stack(aux_embeds) # bsz, 48, 768
+#             aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
+#             embeddings = torch.cat((embeddings, aux_embeds), dim=1)
+
+#         if rcnn_embeddings is not None:
+#             rcnn_embeds = []
+#             for rcnn_embedding in rcnn_embeddings:
+#                 rcnn_embed = self.patch_embedding(rcnn_embedding)
+#                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*4, 768 3个子图
+#                 rcnn_vae_embeds = self.vae(rcnn_embedding)
+#                 rcnn_vae_embeds = rcnn_vae_embeds.view(batch_size, -1,self.embed_dim)
+#                 rcnn_embeds.append(torch.cat((rcnn_embed, rcnn_vae_embeds),dim=1))
+#                 # rcnn_embeds.append(rcnn_embed)
+#             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
+#             rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
+#             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
+#         #print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
+#         return embeddings
+
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config):
+        print("Initializing CLIPVisionEmbeddings in modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
 
-        # Initialize ConvVAE for generating image embeddings
-        self.vae = ConvVAE(in_channels=3, latent_dim=self.embed_dim)
+        self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
 
-        # Patch embedding and position embeddings
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
+        # Initialize ConvVAE for generating image embeddings
+        self.vae = ConvVAE(in_channels=3, latent_dim=self.embed_dim)
+
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
 
-    def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
-        batch_size = pixel_values.shape[0]
+        # lilei:
+        self.aux_position_embedding = nn.Embedding(48, self.embed_dim)
+        self.register_buffer("aux_position_ids", torch.arange(48).expand((1, -1)))
 
-        # VAE-based embeddings
+        self.rcnn_position_embedding = nn.Embedding(12, self.embed_dim)
+        self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
+
+    def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
+        # print("Inside forward of CLIPVisionEmbeddings in modelling_unimo.py")
+        batch_size = pixel_values.shape[0]
+        patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
+        patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [*, grid*grid, width]
         vae_embeds = self.vae(pixel_values)  # Get latent representation from ConvVAE
         vae_embeds = vae_embeds.view(batch_size, -1, self.embed_dim)  # Reshape to fit expected input dimensions
-
-        # Patch embeddings for main input
-        patch_embeds = self.patch_embedding(pixel_values).flatten(2).transpose(1, 2)
-
-        # Concatenate VAE embeddings with patch embeddings
+        # print("patch embeds = ",patch_embeds.shape)
+        # print("vae embeds = ",vae_embeds.shape)
         embeddings = torch.cat((patch_embeds, vae_embeds), dim=1)
+        class_embeds = self.class_embedding.expand(batch_size, 1, -1)
+        # lilei
+     
         # embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
         # embeddings = embeddings + self.position_embedding(self.position_ids)
 
         # lilei:
         if aux_embeddings is not None:
             aux_embeds = []
+            
             for aux_embedding in aux_embeddings:
                 aux_embed = self.patch_embedding(aux_embedding)
-                aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*16, 768 3个子图
+                aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1) # 3*16, 768 3个子图
+                # print("aux embeds = ",aux_embed.shape)
                 aux_vae_embeds = self.vae(aux_embedding)
-                aux_vae_embeds = aux_vae_embeds.view(batch_size, -1, self.embed_dim)
-                aux_embeds.append(torch.cat((aux_embed, aux_vae_embeds), dim=1))
-                # aux_embeds.append(aux_embed)
+                # aux_vae_embeds = aux_vae_embeds.view(batch_size, -1, self.embed_dim).flatten(0,1)
+                aux_vae_emebds = aux_vae_embeds.flatten(2).transpose(1,2).flatten(0, 1)
+                # print("vae aux = ",aux_vae_embeds.shape)
+                # aux_embeds.append(torch.cat((aux_embed,aux_vae_embeds), dim=1))
+                # aux_embeds.append(torch.cat(aux_embed,aux_vae_embeds),dim = 1)
+                aux_embeds.append(aux_embed)
             aux_embeds = torch.stack(aux_embeds) # bsz, 48, 768
-            aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
+            # aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
+            # print("final aux = ",aux_embeds.shape)
             embeddings = torch.cat((embeddings, aux_embeds), dim=1)
 
         if rcnn_embeddings is not None:
             rcnn_embeds = []
             for rcnn_embedding in rcnn_embeddings:
                 rcnn_embed = self.patch_embedding(rcnn_embedding)
-                rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*4, 768 3个子图
+                rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0,1)   # 3*4, 768 3个子图
+                # print("rcnn = ",rcnn_embed.shape)
                 rcnn_vae_embeds = self.vae(rcnn_embedding)
-                rcnn_vae_embeds = rcnn_vae_embeds.view(batch_size, -1,self.embed_dim)
-                rcnn_embeds.append(torch.cat((rcnn_embed, rcnn_vae_embeds),dim=1))
-                # rcnn_embeds.append(rcnn_embed)
+                rcnn_vae_embeds = rcnn_vae_embeds.flatten(2).transpose(1, 2).flatten(0,1)
+                # rcnn_vae_embeds = rcnn_vae_embeds.view(batch_size, -1,self.embed_dim).flatten(0,1)
+                # print("vae rcnn = ",rcnn_vae_embeds.shape)
+                # rcnn_embeds.append(torch.cat((rcnn_embed,rcnn_vae_embeds),dim=1))
+                rcnn_embeds.append(rcnn_embed)
             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
-            rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
+            # print("final rcnn = ",rcnn_embeds.shape)
+            # rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
-        #print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
+        # print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
         return embeddings
-
 
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
@@ -681,7 +764,7 @@ class UnimoEncoder(nn.Module):
             
             # vision
             # TODO: 9-12 layers past text as pkv to vision
-            past_key_values = text_layer_output[-1] if idx >= 6 else None
+            past_key_values = text_layer_output[-1] if idx >= 9 else None
             vision_layer_module = self.vision_layers[idx]
             vision_layer_output = vision_layer_module(
                     vision_hidden_states,
