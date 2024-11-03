@@ -100,43 +100,74 @@ class UnimoPreTrainedModel(PreTrainedModel):
     def __init_weights(self, module):
         pass
 
+class ConvVAE(nn.Module):
+    def __init__(self, in_channels=3, latent_dim=256, hidden_dims=[32, 64, 128, 256]):
+        super(ConvVAE, self).__init__()
+        
+        # Encoder: Convolutional layers to encode images into a latent space
+        modules = []
+        for h_dim in hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, h_dim, kernel_size=3, stride=2, padding=1),
+                    nn.BatchNorm2d(h_dim),
+                    nn.ReLU())
+            )
+            in_channels = h_dim
+        self.encoder = nn.Sequential(*modules)
+        
+        # Compute mean and log variance of latent space
+        self.fc_mu = nn.Conv2d(hidden_dims[-1], latent_dim, kernel_size=1)
+        self.fc_logvar = nn.Conv2d(hidden_dims[-1], latent_dim, kernel_size=1)
 
+    def encode(self, x):
+        enc_out = self.encoder(x)
+        mu = self.fc_mu(enc_out)
+        logvar = self.fc_logvar(enc_out)
+        return mu, logvar
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        mu, logvar = self.encode(x)
+        z = self.reparameterize(mu, logvar)
+        return z, mu, logvar
+        
 class CLIPVisionEmbeddings(nn.Module):
     def __init__(self, config):
-        print("Initializing CLIPVisionEmbeddings in modelling_unimo.py")
         super().__init__()
         self.config = config
         self.embed_dim = config.hidden_size
         self.image_size = config.image_size
         self.patch_size = config.patch_size
 
-        self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
+        # Initialize ConvVAE for generating image embeddings
+        self.vae = ConvVAE(in_channels=3, latent_dim=self.embed_dim)
 
+        # Patch embedding and position embeddings
         self.patch_embedding = nn.Conv2d(
             in_channels=3, out_channels=self.embed_dim, kernel_size=self.patch_size, stride=self.patch_size, bias=False
         )
-
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.num_positions = self.num_patches + 1
         self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)))
 
-        # lilei:
-        self.aux_position_embedding = nn.Embedding(48, self.embed_dim)
-        self.register_buffer("aux_position_ids", torch.arange(48).expand((1, -1)))
-
-        self.rcnn_position_embedding = nn.Embedding(12, self.embed_dim)
-        self.register_buffer("rcnn_position_ids", torch.arange(12).expand((1, -1)))
-
     def forward(self, pixel_values, aux_embeddings=None, rcnn_embeddings=None):
-        print("Inside forward of CLIPVisionEmbeddings in modelling_unimo.py")
         batch_size = pixel_values.shape[0]
-        patch_embeds = self.patch_embedding(pixel_values)  # shape = [*, width, grid, grid]
-        patch_embeds = patch_embeds.flatten(2).transpose(1, 2)  # shape = [*, grid*grid, width]
 
-        class_embeds = self.class_embedding.expand(batch_size, 1, -1)
-        # lilei
-        embeddings = patch_embeds
+        # VAE-based embeddings
+        vae_embeds, _, _ = self.vae(pixel_values)  # Get latent representation from ConvVAE
+        vae_embeds = vae_embeds.view(batch_size, -1, self.embed_dim)  # Reshape to fit expected input dimensions
+
+        # Patch embeddings for main input
+        patch_embeds = self.patch_embedding(pixel_values).flatten(2).transpose(1, 2)
+
+        # Concatenate VAE embeddings with patch embeddings
+        embeddings = torch.cat((patch_embeds, vae_embeds), dim=1)
         # embeddings = torch.cat([class_embeds, patch_embeds], dim=1)
         # embeddings = embeddings + self.position_embedding(self.position_ids)
 
@@ -148,7 +179,7 @@ class CLIPVisionEmbeddings(nn.Module):
                 aux_embed = aux_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*16, 768 3个子图
                 aux_embeds.append(aux_embed)
             aux_embeds = torch.stack(aux_embeds) # bsz, 48, 768
-            # aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
+            aux_embeds = aux_embeds + self.aux_position_embedding(self.aux_position_ids)
             embeddings = torch.cat((embeddings, aux_embeds), dim=1)
 
         if rcnn_embeddings is not None:
@@ -158,7 +189,7 @@ class CLIPVisionEmbeddings(nn.Module):
                 rcnn_embed = rcnn_embed.flatten(2).transpose(1, 2).flatten(0, 1)    # 3*4, 768 3个子图
                 rcnn_embeds.append(rcnn_embed)
             rcnn_embeds = torch.stack(rcnn_embeds) # bsz, 12, 768
-            # rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
+            rcnn_embeds = rcnn_embeds + self.rcnn_position_embedding(self.rcnn_position_ids)
             embeddings = torch.cat((embeddings, rcnn_embeds), dim=1)
         print("Exiting forward of CLIPVisionEmbeddings in modelling_unimo.py")
         return embeddings
@@ -644,7 +675,7 @@ class UnimoEncoder(nn.Module):
             
             # vision
             # TODO: 9-12 layers past text as pkv to vision
-            past_key_values = text_layer_output[-1] if idx >= 8 else None
+            past_key_values = text_layer_output[-1] if idx >= 6 else None
             vision_layer_module = self.vision_layers[idx]
             vision_layer_output = vision_layer_module(
                     vision_hidden_states,
@@ -656,7 +687,7 @@ class UnimoEncoder(nn.Module):
             # text
             # TODO: 9-12 layers past vison qks to text
             last_hidden_state = vision_hidden_states if idx >= 8 else None
-            output_qks = True if idx >= 7 else None
+            output_qks = True if idx >= 6 else None
             layer_head_mask = head_mask[idx] if head_mask is not None else None
             text_layer_module = self.text_layer[idx]
             text_layer_output = text_layer_module(
@@ -706,6 +737,10 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+class VAE(nn.Module):
+    def __init__(self, config, image_encoder, text_encoder, image_decoder, text_decoder):
+        super().__init__()
+        
 
 class UnimoModel(nn.Module):
     def __init__(self, vision_config, text_config, add_pooling_layer=True):
