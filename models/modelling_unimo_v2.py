@@ -716,7 +716,25 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+class NeuralPrior(nn.Module):
+    """
+    Neural Prior is used to generate the visual prompt (patch).
+    It takes a random noise as input and outputs an RGB patch.
+    """
+    def __init__(self, input_size):
+        super(NeuralPrior, self).__init__()
+        # Simple U-Net-like structure for generating the prompt
+        self.unet = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(128, 256, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(256, 128, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(64, 3, 3, padding=1), nn.Sigmoid()  # Output is a normalized RGB patch
+        )
 
+    def forward(self, noise):
+        return self.unet(noise)
 
 class VisualPrompt(nn.Module):
     def __init__(self, prompt_size, image_size):
@@ -764,6 +782,12 @@ def compute_kl_loss(attention_weights, target_map):
     """
     Compute KL-Divergence between attention weights and the Gaussian target map.
     """
+    device = attention_weights.device  # Get the device of attention_weights (e.g., cuda:0)
+
+    # Move target_map to the same device as attention_weights
+    target_map = target_map.to(device)
+    if target_map.dim() == 2:  # If target_map is missing the batch dimension
+        target_map = target_map.unsqueeze(0).expand_as(attention_weights)
     attention_probs = nn.functional.softmax(attention_weights, dim=-1)
     target_probs = nn.functional.softmax(target_map, dim=-1)
     loss = nn.functional.kl_div(attention_probs.log(), target_probs, reduction='batchmean')
@@ -861,7 +885,7 @@ class UnimoModel(nn.Module):
         else:
             # Or simply use the last hidden state
             averaged_hidden_states = vision_hidden_states
-
+        
         cls_token_position = (0, 0)  # You can set this to other positions
         gaussian_target_map = create_gaussian_target_map(
             cls_token_position, 
