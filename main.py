@@ -146,12 +146,23 @@ def main():
                                             default_root_dir="training/logs",)
     #print("Done Initializing trainer")
 
-    if "EntityEmbedding" not in lit_model.__class__.__name__:
-        #print("Starting training")
-        trainer.fit(lit_model, datamodule=data)
-        path = model_checkpoint.best_model_path
-        lit_model.load_state_dict(torch.load(path)["state_dict"])
+    # if "EntityEmbedding" not in lit_model.__class__.__name__:
+    #     #print("Starting training")
+    #     trainer.fit(lit_model, datamodule=data)
+    #     path = model_checkpoint.best_model_path
+    #     lit_model.load_state_dict(torch.load(path)["state_dict"])
 
+    predictions = trainer.predict(lit_model, datamodule=data)
+    for batch_idx, batch_results in enumerate(predictions):
+        inputs = batch_results["inputs"]  # Decoded input sequences
+        preds = batch_results["predictions"]  # Model's predictions
+        labels = batch_results["labels"]  # Ground truth labels
+
+        print(f"Batch {batch_idx} Results:")
+        for i in range(len(inputs)):
+            print(f"  Input: {inputs[i]}")
+            print(f"  Predicted: {preds[i].tolist()}")
+            print(f"  True Labels: {labels[i].tolist() if isinstance(labels, torch.Tensor) else labels[i]}")
     result = trainer.test(lit_model, datamodule=data)
     #print(result)
                                                 
@@ -161,10 +172,5 @@ def main():
         #print(path)
     #print("Exiting main")
 
-
-
-
-
-if __name__ == "__main__":
-
+if __name__ == "__main__" :
     main()
