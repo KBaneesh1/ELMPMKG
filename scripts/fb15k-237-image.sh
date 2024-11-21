@@ -4,7 +4,7 @@
 # batch_size: batch size (recommendation: 96)
 # lr: learning rate (recommendation: 4e-5)
 
-python main.py --gpus "0," --max_epochs=12  --num_workers=4 \
+python main.py --gpus "0," --max_epochs=12  --num_workers=4 --checkpoints=crossAttentionTrain.ckpt\
    --model_name_or_path  bert-base-uncased \
    --accumulate_grad_batches 1 \
    --model_class UnimoKGC \
