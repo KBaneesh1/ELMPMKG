@@ -1,239 +1,285 @@
+import os
 import torch
-import torch.nn as nn
-import numpy as np
-from .base import BaseLitModel
-from transformers.optimization import get_linear_schedule_with_warmup
-from functools import partial
-from .utils import LabelSmoothSoftmaxCEV1
-from typing import Callable, Iterable, List
+import random
+import transformers
+from PIL import Image
+from enum import Enum
+from os import listdir
+from dataclasses import dataclass
+from typing import Any, Optional, Union
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer, BertTokenizer
+from transformers.models.clip import CLIPProcessor
+from transformers.tokenization_utils_base import (BatchEncoding,
+                                                  PreTrainedTokenizerBase)
+from .base_data_module import BaseDataModule
+from .processor import KGProcessor, get_dataset
 
-def lmap(f: Callable, x: Iterable) -> List:
-    """list(map(f, x))"""
-    #print("Executing lmap function transformer.py")
-    return list(map(f, x))
+transformers.logging.set_verbosity_error()
 
-def multilabel_categorical_crossentropy(y_pred, y_true):
-    #print("Calculating multilabel categorical cross-entropy loss processor.py")
-    y_pred = (1 - 2 * y_true) * y_pred
-    y_pred_neg = y_pred - y_true * 1e12
-    y_pred_pos = y_pred - (1 - y_true) * 1e12
-    zeros = torch.zeros_like(y_pred[..., :1])
-    y_pred_neg = torch.cat([y_pred_neg, zeros], dim=-1)
-    y_pred_pos = torch.cat([y_pred_pos, zeros], dim=-1)
-    neg_loss = torch.logsumexp(y_pred_neg, dim=-1)
-    pos_loss = torch.logsumexp(y_pred_pos, dim=-1)
-    return (neg_loss + pos_loss).mean()
 
-def decode(output_ids, tokenizer):
-    #print("Inside Decode fcuntion processor.py")
-    return lmap(str.strip, tokenizer.batch_decode(output_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True))
+aux_size, rcnn_size = 128, 64
+clip_processor = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
+aux_processor = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
+aux_processor.feature_extractor.size, aux_processor.feature_extractor.crop_size = aux_size, aux_size
+rcnn_processor = CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
+rcnn_processor.feature_extractor.size, rcnn_processor.feature_extractor.crop_size = rcnn_size, rcnn_size
 
-class TransformerLitModel(BaseLitModel):
-    def __init__(self, model, args, tokenizer=None, data_config={}):
-        #print("Initializing TransformerLitModel")
-        super().__init__(model, args)
-        self.save_hyperparameters(args)
-        if args.bce:
-            #print("Using BCEWithLogitsLoss")
-            self.loss_fn = nn.BCEWithLogitsLoss()
-        elif args.label_smoothing != 0.0:
-            #print("Using LabelSmoothSoftmaxCEV1 with smoothing")
-            self.loss_fn = LabelSmoothSoftmaxCEV1(lb_smooth=args.label_smoothing)
-        else:
-            #print("Using CrossEntropyLoss")
-            self.loss_fn = nn.CrossEntropyLoss()
 
-        self.best_acc = 0
-        self.first = True
-        self.tokenizer = tokenizer
-        self.__dict__.update(data_config)
+class ExplicitEnum(Enum):
+    """
+    Enum with more explicit error message for missing values.
+    """
 
-        # resize the word embedding layer
-        self.model.resize_token_embeddings(len(self.tokenizer))
-        self.decode = partial(decode, tokenizer=self.tokenizer)
+    @classmethod
+    def _missing_(cls, value):
+        raise ValueError(
+            f"{value} is not a valid {cls.__name__}, please select one of {list(cls._value2member_map_.keys())}"
+        )
 
-        if args.pretrain:
-            # when pretrain, only tune embedding layers
-            #print("Pretrain so tuning only embedding layers")
-            self._freeze_attention()
 
+class PaddingStrategy(ExplicitEnum):
+    """
+    Possible values for the ``padding`` argument in :meth:`PreTrainedTokenizerBase.__call__`. Useful for tab-completion
+    in an IDE.
+    """
+
+    LONGEST = "longest"
+    MAX_LENGTH = "max_length"
+    DO_NOT_PAD = "do_not_pad"
+
+
+@dataclass
+class DataCollatorForSeq2Seq:
+    """
+    Data collator that will dynamically pad the inputs received, as well as the labels.
+
+    Args:
+        tokenizer (:class:`~transformers.PreTrainedTokenizer` or :class:`~transformers.PreTrainedTokenizerFast`):
+            The tokenizer used for encoding the data.
+        model (:class:`~transformers.PreTrainedModel`):
+            The model that is being trained. If set and has the `prepare_decoder_input_ids_from_labels`, use it to
+            prepare the `decoder_input_ids`
+
+            This is useful when using `label_smoothing` to avoid calculating loss twice.
+        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.file_utils.PaddingStrategy`, `optional`, defaults to :obj:`True`):
+            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
+            among:
+
+            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
+              sequence is provided).
+            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
+              maximum acceptable input length for the model if that argument is not provided.
+            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
+              different lengths).
+        max_length (:obj:`int`, `optional`):
+            Maximum length of the returned list and optionally padding length (see above).
+        pad_to_multiple_of (:obj:`int`, `optional`):
+            If set will pad the sequence to a multiple of the provided value.
+
+            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
+            7.5 (Volta).
+        label_pad_token_id (:obj:`int`, `optional`, defaults to -100):
+            The id to use when padding the labels (-100 will be automatically ignored by PyTorch loss functions).
+    """
  
-    def forward(self, x):
-        #print("Performing forward pass in TransformerLitModel")
-        return self.model(x)
+    tokenizer: PreTrainedTokenizerBase
+    model: Optional[Any] = None
+    padding: Union[bool, str, PaddingStrategy] = True
+    max_length: Optional[int] = None
+    pad_to_multiple_of: Optional[int] = None
+    label_pad_token_id: int = -100
+    return_tensors: str = "pt"
+    num_labels: int = 0
+    task_name: str = None
+    entity_img_path: str = None
+    entity_img_files: Optional[Any] = None
 
-    def training_step(self, batch, batch_idx):
-        #print(f"Executing training_step for batch {batch_idx} in TransformerLitModel")
-        labels = batch.pop("labels")
-        label = batch.pop("label")
-        input_ids = batch['input_ids']
-        logits = self.model(**batch, return_dict=True).logits
+    def __call__(self, features, return_tensors=None):
+        #print("Inside __call__ function of DataCollatorForSeq2Seq")
+        if return_tensors is None:
+            return_tensors = self.return_tensors
+        labels = [feature.pop("labels") for feature in features] if "labels" in features[0].keys() else None
+        label = [feature.pop("label") for feature in features]
+        features_keys = {} 
+        entities = [feature.pop("entity") for feature in features] if "entity" in features[0].keys() else None
+        for k in features[0].keys():
+            # ignore the padding arguments
+            if k in ["input_ids", "attention_mask", "token_type_ids"]: continue
+            features_keys[k] = [feature.pop(k) for feature in features]
+
+        # We have to pad the labels before calling `tokenizer.pad` as this method won't pad them and needs them of the
+        # same length to return tensors.
+        bsz = len(labels)
+        with torch.no_grad():
+            new_labels = torch.zeros(bsz, self.num_labels)
+            for i,l in enumerate(labels):
+                if isinstance(l, int): 
+                    new_labels[i][l] = 1
+                else:
+                    for j in l:
+                        new_labels[i][j] = 1
+            labels = new_labels
+
+        features = self.tokenizer.pad(
+            features,
+            padding=self.padding,
+            max_length=self.max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors=return_tensors,
+        )
+        features['labels'] = labels
+        features['label'] = torch.tensor(label)
+        features.update(features_keys)
+
+        # region
+        pixel_images, aux_images, rcnn_images = [], [], []
+        for entity in entities:
+            if self.task_name == 'wn18':
+                en_file = 'n' + entity    # wn18
+            elif self.task_name == 'fb15k-237':
+                en_file = entity[1:].replace('/', '.') # m.01rng // n01443537
+            else:
+                raise ValueError(
+                f"{self.task_name} is not a valid task name, please select one of [wn18, fb15k-237]"
+            )
+            en_imgs = []
+            if en_file in self.entity_img_files:
+                en_file = os.path.join(self.entity_img_path, en_file)
+                en_imgs = [os.path.join(en_file, file) for file in os.listdir(en_file)]
+                if len(en_imgs) > 7:    # random select six imgs
+                    random.seed(1)
+                    en_imgs = random.sample(en_imgs, k=7)
+            en_full_imgs = en_imgs[:1]
+            en_aux_imgs = en_imgs[1:4]
+            en_rcnn_imgs = en_imgs[4:]
+
+            if len(en_full_imgs) > 0:
+                try:
+                    full_img = Image.open(en_full_imgs[0]).convert('RGB')
+                    full_img = clip_processor(images=full_img, return_tensors='pt')['pixel_values'].squeeze()
+                    pixel_images.append(full_img)
+                except:
+                    pixel_images.append(torch.zeros((3, 224, 224)))
+            else:
+                pixel_images.append(torch.zeros((3, 224, 224)))
+
+            aux_imgs, rcnn_imgs = [], []
+            # select 3 imgs
+            for i in range(min(3, len(en_aux_imgs))):
+                try:
+                    aux_img = Image.open(en_aux_imgs[i]).convert('RGB')
+                    aux_img = aux_processor(images=aux_img, return_tensors='pt')['pixel_values'].squeeze()
+                    aux_imgs.append(aux_img)
+                except:
+                    aux_imgs.append(torch.zeros((3, 224, 224)))
+            for i in range(min(3, len(en_rcnn_imgs))):
+                try:
+                    rcnn_img = Image.open(en_rcnn_imgs[i]).convert('RGB')
+                    rcnn_img = rcnn_processor(images=rcnn_img, return_tensors='pt')['pixel_values'].squeeze()
+                    rcnn_imgs.append(rcnn_img)
+                except:
+                    rcnn_imgs.append(torch.zeros((3, 224, 224)))
+            # padding
+            for i in range(3-len(en_aux_imgs)):
+                aux_imgs.append(torch.zeros((3, aux_size, aux_size))) 
+            for i in range(3-len(en_rcnn_imgs)):
+                rcnn_imgs.append(torch.zeros((3, rcnn_size, rcnn_size)))
+            aux_images.append(torch.stack(aux_imgs))
+            rcnn_images.append(torch.stack(rcnn_imgs))
+
+        features['pixel_values'] = torch.stack(pixel_images)
+        features['aux_values'] = torch.stack(aux_images)
+        features['rcnn_values'] = torch.stack(rcnn_images)
+        #endregion
+        #print("Exiting __call__ function of DataCollatorForSeq2Seq")
+        return features
+
+
+class KGC(BaseDataModule):
+    def __init__(self, args, model) -> None:
+        #print("Initialising KGC class")
+        super().__init__(args)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.args.model_name_or_path, use_fast=False)
+        self.processor = KGProcessor(self.tokenizer, args)
+        self.label_list = self.processor.get_labels(args.data_dir)
+
+        entity_list = self.processor.get_entities(args.data_dir)
+        #print(len(entity_list)) 
         
-        _, mask_idx = (input_ids == self.tokenizer.mask_token_id).nonzero(as_tuple=True)
-        bs = input_ids.shape[0]
-        mask_logits = logits[torch.arange(bs), mask_idx][:, self.entity_id_st:self.entity_id_ed]
-        assert mask_idx.shape[0] == bs, "only one mask in sequence!"
-
-        if self.args.bce:
-            #print("Calculating BCE loss")
-            loss = self.loss_fn(mask_logits, labels)
-        else:
-            #print("Calculating Cross Entropy loss")
-            loss = self.loss_fn(mask_logits, label)
-
-        if batch_idx == 0:
-            #print("Decoded input IDs for first batch:\n" + '\n'.join(self.decode(batch['input_ids'][:4])))
-            print('\n'.join(self.decode(batch['input_ids'][:4])))
-        return loss
-
-    def _eval(self, batch, batch_idx, ):
-        #print(f"Evaluating batch in _eval function of batch {batch_idx} in TransformerLitModel")
-        labels = batch.pop("labels")
-        input_ids = batch['input_ids']
-        # single label
-        label = batch.pop('label')  # bsz
-        logits = self.model(**batch, return_dict=True).logits[:, :, self.entity_id_st:self.entity_id_ed] # bsz, len, entites
-
-        _, mask_idx = (input_ids == self.tokenizer.mask_token_id).nonzero(as_tuple=True)    # bsz
-        bsz = input_ids.shape[0]
-        logits = logits[torch.arange(bsz), mask_idx] # bsz, entites
-        # get the entity ranks
-        # filter the entity
-        assert labels[0][label[0]], "correct ids must in filiter!"
-        labels[torch.arange(bsz), label] = 0
-        assert logits.shape == labels.shape
-        logits += labels * -100 # mask entity 
-
-        _, outputs = torch.sort(logits, dim=1, descending=True) # bsz, entities   index
-        _, outputs = torch.sort(outputs, dim=1)
-        ranks = outputs[torch.arange(bsz), label].detach().cpu() + 1
-        return dict(ranks = np.array(ranks))
-
-    def validation_step(self, batch, batch_idx):
-        #print(f"Running validation_step for batch {batch_idx} in TransformerLitModel")
-        result = self._eval(batch, batch_idx)
-        return result
-
-    def validation_epoch_end(self, outputs) -> None:
-        #print("Completing validation_epoch_end in TransformerLitModel")
-        ranks = np.concatenate([_['ranks'] for _ in outputs])
-        total_ranks = ranks.shape[0]
-
-        if not self.args.pretrain:
-            l_ranks = ranks[np.array(list(np.arange(0, total_ranks, 2)))]
-            r_ranks = ranks[np.array(list(np.arange(0, total_ranks, 2))) + 1]
-            self.log("Eval/lhits10", (l_ranks<=10).mean())
-            self.log("Eval/rhits10", (r_ranks<=10).mean())
-
-        hits20 = (ranks<=20).mean()
-        hits10 = (ranks<=10).mean()
-        hits3 = (ranks<=3).mean()
-        hits1 = (ranks<=1).mean()
-
-        self.log("Eval/hits10", hits10)
-        self.log("Eval/hits20", hits20)
-        self.log("Eval/hits3", hits3)
-        self.log("Eval/hits1", hits1)
-        self.log("Eval/mean_rank", ranks.mean())
-        self.log("Eval/mrr", (1. / ranks).mean())
-        self.log("hits10", hits10, prog_bar=True)
-        self.log("hits1", hits1, prog_bar=True)
-  
-
-    def test_step(self, batch, batch_idx):
-        #print("executing test_step of TransformerLitModel")
-        result = self._eval(batch, batch_idx)
-        # self.log("Test/ranks", np.mean(ranks))
-        return result
-
-    def predict_step(self, batch, batch_idx):
-        # Extract input IDs and labels
-        print(batch.keys())
-        input_ids = batch['input_ids']
-        labels = batch.pop("labels")
-        label = batch.pop("label")
-
-        # Compute logits
-        logits = self.model(**batch, return_dict=True).logits
-        _, mask_idx = (input_ids == self.tokenizer.mask_token_id).nonzero(as_tuple=True)
-        bs = input_ids.shape[0]
-        mask_logits = logits[torch.arange(bs), mask_idx][:, self.entity_id_st:self.entity_id_ed]
+        num_added_tokens = self.tokenizer.add_special_tokens({'additional_special_tokens': entity_list})
         
-        # Generate predictions
-        if self.args.bce:
-            preds = (mask_logits > 0.5).int()  # Threshold for multi-label classification
-        else:
-            preds = torch.argmax(mask_logits, dim=1)  # Predicted class indices
+        entity_img_path = {'wn18': 'dataset/wn18-images/', 'fb15k-237': 'dataset/FB15k-images/'}[self.args.task_name]
+        entity_img_files = listdir(entity_img_path)
+        self.sampler = DataCollatorForSeq2Seq(self.tokenizer,
+            model=model,
+            label_pad_token_id=self.tokenizer.pad_token_id,
+            pad_to_multiple_of=8 if self.args.precision == 16 else None,
+            padding="longest",
+            max_length=self.args.max_seq_length,
+            num_labels=len(entity_list),
+            task_name=self.args.task_name,
+            entity_img_path=entity_img_path,
+            entity_img_files=entity_img_files
+        )
+        relations_tokens = self.processor.get_relations(args.data_dir)
+        self.num_relations = len(relations_tokens)
+        num_added_tokens = self.tokenizer.add_special_tokens({'additional_special_tokens': relations_tokens})
 
-        # Decode inputs for readability
-        decoded_inputs = self.decode(input_ids)
+        vocab = self.tokenizer.get_added_vocab()    # dict: word: idx
+        self.relation_id_st = vocab[relations_tokens[0]]
+        self.relation_id_ed = vocab[relations_tokens[-1]] + 1
+        self.entity_id_st = vocab[entity_list[0]]
+        self.entity_id_ed = vocab[entity_list[-1]] + 1
 
-        # Print or return predictions
-        print(f"Batch {batch_idx} Predictions:")
-        for i in range(bs):
-            print(f"Input: {decoded_inputs[i]}")
-            print(f"Predicted: {preds[i].tolist()}")
-            print(f"True Labels: {labels[i].tolist() if self.args.bce else label[i].item()}")
 
-        return {"inputs": decoded_inputs, "predictions": preds, "labels": labels if self.args.bce else label}
+    def setup(self, stage=None):
+        #print("Assigning variables in setup function of KGC")
+        self.data_train = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "train")
+        self.data_val = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "dev")
+        self.data_test = get_dataset(self.args, self.processor, self.label_list, self.tokenizer, "test")
 
-    def test_epoch_end(self, outputs) -> None:
-        #print("executing test_epoch_end of TransformerLitModel")
-        ranks = np.concatenate([_['ranks'] for _ in outputs])
+    def prepare_data(self):
+        pass
 
-        hits20 = (ranks<=20).mean()
-        hits10 = (ranks<=10).mean()
-        hits3 = (ranks<=3).mean()
-        hits1 = (ranks<=1).mean()
-
-       
-        self.log("Test/hits10", hits10)
-        self.log("Test/hits20", hits20)
-        self.log("Test/hits3", hits3)
-        self.log("Test/hits1", hits1)
-        self.log("Test/mean_rank", ranks.mean())
-        self.log("Test/mrr", (1. / ranks).mean())
-
-    def configure_optimizers(self):
-        #print("Configure_optimizers of TransformerLitModel")
-        no_decay_param = ["bias", "LayerNorm.weight"]
-
-        optimizer_group_parameters = [
-            {"params": [p for n, p in self.model.named_parameters() if p.requires_grad and not any(nd in n for nd in no_decay_param)], "weight_decay": self.args.weight_decay},
-            {"params": [p for n, p in self.model.named_parameters() if p.requires_grad and any(nd in n for nd in no_decay_param)], "weight_decay": 0}
-        ]
-
-        optimizer = self.optimizer_class(optimizer_group_parameters, lr=self.lr, eps=1e-8)
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=self.num_training_steps * self.args.warm_up_radio, num_training_steps=self.num_training_steps)
-        return {
-            "optimizer": optimizer, 
-            "lr_scheduler":{
-                'scheduler': scheduler,
-                'interval': 'step',  # or 'epoch'
-                'frequency': 1,
-            }
-        }
-    
-    def _freeze_attention(self):
-        #print("_freeze_attention of TransformerLitModel")
-        for k, v in self.model.named_parameters():
-            if "word" not in k: 
-                v.requires_grad = False
-            # else:
-            #     print(k)
-    
-    def _freaze_word_embedding(self):
-        #print("Freezing word embedding layers TransformerLitModel")
-        for k, v in self.model.named_parameters():
-            if "word" in k:
-                #print(k)
-                v.requires_grad = False
+    def get_config(self):
+        #print("Inside get_config of KGC")
+        d = {}
+        for k, v in self.__dict__.items():
+            if "st" in k or "ed" in k:
+                d.update({k:v})
+        #print("Exciting get_config of KGC")
+        return d
 
     @staticmethod
     def add_to_argparse(parser):
-        #print("executing add_to_argpare in transformnerlitmodel")
-        parser = BaseLitModel.add_to_argparse(parser)
-
-        parser.add_argument("--label_smoothing", type=float, default=0.1, help="")
-        parser.add_argument("--bce", type=int, default=0, help="")
+        #print("Inside add_to_argparse function KGC class")
+        BaseDataModule.add_to_argparse(parser)
+        parser.add_argument("--model_name_or_path", type=str, default="roberta-base", help="the name or the path to the pretrained model")
+        parser.add_argument("--data_dir", type=str, default="roberta-base", help="the name or the path to the pretrained model")
+        parser.add_argument("--max_seq_length", type=int, default=256, help="Number of examples to operate on per forward step.")
+        parser.add_argument("--warm_up_radio", type=float, default=0.1, help="Number of examples to operate on per forward step.")
+        parser.add_argument("--eval_batch_size", type=int, default=8)
+        parser.add_argument("--overwrite_cache", action="store_true", default=False)
+        #print("Exciting add_to_argparse function KGC class")
         return parser
+
+    def get_tokenizer(self):
+        #print("Returning get_tokenizer KGC class")
+        return self.tokenizer
+
+    def train_dataloader(self):
+        #print("Inside train_dataloader KGC class")
+        return DataLoader(self.data_train, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.batch_size, shuffle=self.args.pretrain)
+
+    def val_dataloader(self):
+        #print("Inside val_dataloader KGC class")
+        return DataLoader(self.data_val, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
+
+    def test_dataloader(self):
+        #print("Inside test_dataloader KGC class")
+        return DataLoader(self.data_test, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
+
+    def predict_dataloader(self):
+            #print("Inside test_dataloader KGC class")
+            return DataLoader(self.data_test, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
