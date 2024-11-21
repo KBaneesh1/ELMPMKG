@@ -151,7 +151,7 @@ def main():
     #     trainer.fit(lit_model, datamodule=data)
     #     path = model_checkpoint.best_model_path
     #     lit_model.load_state_dict(torch.load(path)["state_dict"])
-
+        
     predictions = trainer.predict(lit_model, datamodule=data)
     for batch_idx, batch_results in enumerate(predictions):
         inputs = batch_results["inputs"]  # Decoded input sequences
@@ -163,7 +163,7 @@ def main():
             print(f"  Input: {inputs[i]}")
             print(f"  Predicted: {preds[i].tolist()}")
             print(f"  True Labels: {labels[i].tolist() if isinstance(labels, torch.Tensor) else labels[i]}")
-    result = trainer.test(lit_model, datamodule=data)
+    # result = trainer.test(lit_model, datamodule=data)
     #print(result)
                                                 
     # _saved_pretrain(lit_model, tokenizer, path)
@@ -172,5 +172,10 @@ def main():
         #print(path)
     #print("Exiting main")
 
-if __name__ == "__main__" :
+
+
+
+
+if __name__ == "__main__":
+
     main()
