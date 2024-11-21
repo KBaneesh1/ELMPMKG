@@ -279,4 +279,8 @@ class KGC(BaseDataModule):
     def test_dataloader(self):
         #print("Inside test_dataloader KGC class")
         return DataLoader(self.data_test, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
+    
+    def predict_dataloader(self):
+        #print("Inside test_dataloader KGC class")
+        return DataLoader(self.data_test, num_workers=self.num_workers, pin_memory=False, collate_fn=self.sampler, batch_size=self.args.eval_batch_size)
 
