@@ -146,6 +146,37 @@ class TransformerLitModel(BaseLitModel):
         # self.log("Test/ranks", np.mean(ranks))
         return result
 
+    def predict_step(self, batch, batch_idx):
+        # Extract input IDs and labels
+        print(batch.keys())
+        input_ids = batch['input_ids']
+        labels = batch.pop("labels")
+        label = batch.pop("label")
+
+        # Compute logits
+        logits = self.model(**batch, return_dict=True).logits
+        _, mask_idx = (input_ids == self.tokenizer.mask_token_id).nonzero(as_tuple=True)
+        bs = input_ids.shape[0]
+        mask_logits = logits[torch.arange(bs), mask_idx][:, self.entity_id_st:self.entity_id_ed]
+        
+        # Generate predictions
+        if self.args.bce:
+            preds = (mask_logits > 0.5).int()  # Threshold for multi-label classification
+        else:
+            preds = torch.argmax(mask_logits, dim=1)  # Predicted class indices
+
+        # Decode inputs for readability
+        decoded_inputs = self.decode(input_ids)
+
+        # Print or return predictions
+        print(f"Batch {batch_idx} Predictions:")
+        for i in range(bs):
+            print(f"Input: {decoded_inputs[i]}")
+            print(f"Predicted: {preds[i].tolist()}")
+            print(f"True Labels: {labels[i].tolist() if self.args.bce else label[i].item()}")
+
+        return {"inputs": decoded_inputs, "predictions": preds, "labels": labels if self.args.bce else label}
+        
     def test_epoch_end(self, outputs) -> None:
         #print("executing test_epoch_end of TransformerLitModel")
         ranks = np.concatenate([_['ranks'] for _ in outputs])
