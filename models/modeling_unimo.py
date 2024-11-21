@@ -716,17 +716,39 @@ class BertPooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+class NeuralPrior(nn.Module):
+    """
+    Neural Prior is used to generate the visual prompt (patch).
+    It takes a random noise as input and outputs an RGB patch.
+    """
+    def __init__(self, input_size):
+        super(NeuralPrior, self).__init__()
+        # Simple U-Net-like structure for generating the prompt
+        self.unet = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(),
+            nn.Conv2d(128, 256, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(256, 128, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 3, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(64, 3, 3, padding=1), nn.Sigmoid()  # Output is a normalized RGB patch
+        )
 
+    def forward(self, noise):
+        return self.unet(noise)
 
 class VisualPrompt(nn.Module):
     def __init__(self, prompt_size, image_size):
         super().__init__()
         self.prompt_size = prompt_size
         self.image_size = image_size
-        self.prompt = nn.Parameter(torch.randn(3, prompt_size, prompt_size))  # Learnable patch
+        self.neural_prior = NeuralPrior(input_size=prompt_size)  # Neural Prior for generating the prompt
 
     def forward(self, images):
         batch_size, channels, height, width = images.size()  # Get dimensions of the image tensor
+        noise = torch.randn(batch_size, 3, self.prompt_size, self.prompt_size, device=images.device)  # Random noise
+
+        # Generate the prompt using Neural Prior
+        prompt = self.neural_prior(noise)
 
         # Ensure that the prompt can fit within the image dimensions
         if self.prompt_size > height or self.prompt_size > width:
@@ -738,7 +760,7 @@ class VisualPrompt(nn.Module):
             y_pos = torch.randint(0, width - self.prompt_size, (1,)).item()
 
             # Insert the prompt at the chosen position
-            images[i, :, x_pos:x_pos + self.prompt_size, y_pos:y_pos + self.prompt_size] = self.prompt
+            images[i, :, x_pos:x_pos + self.prompt_size, y_pos:y_pos + self.prompt_size] = prompt[i]
 
         return images
 
@@ -746,8 +768,7 @@ def create_gaussian_target_map(patch_position, hidden_size, seq_length):
     """
     Creates a Gaussian target map centered around the patch position in token space.
     """
-    gaussian_map = torch.zeros(( seq_length,hidden_size))
-
+    gaussian_map = torch.zeros((seq_length, hidden_size))
     x_center, y_center = patch_position
     sigma = hidden_size / (2 * torch.sqrt(2 * torch.log(torch.tensor(2.0))))
 
@@ -761,6 +782,12 @@ def compute_kl_loss(attention_weights, target_map):
     """
     Compute KL-Divergence between attention weights and the Gaussian target map.
     """
+    device = attention_weights.device  # Get the device of attention_weights (e.g., cuda:0)
+
+    # Move target_map to the same device as attention_weights
+    target_map = target_map.to(device)
+    if target_map.dim() == 2:  # If target_map is missing the batch dimension
+        target_map = target_map.unsqueeze(0).expand_as(attention_weights)
     attention_probs = nn.functional.softmax(attention_weights, dim=-1)
     target_probs = nn.functional.softmax(target_map, dim=-1)
     loss = nn.functional.kl_div(attention_probs.log(), target_probs, reduction='batchmean')
@@ -768,22 +795,23 @@ def compute_kl_loss(attention_weights, target_map):
 
 
 class UnimoModel(nn.Module):
-    def __init__(self, vision_config, text_config, add_pooling_layer=True,prompt_size=32):
-        #print("Initializng UnimoModel of modelling_unimo.py")
+    def __init__(self, vision_config, text_config, add_pooling_layer=True, prompt_size=32):
         super(UnimoModel, self).__init__()
-        # vision model
+        # Vision model setup
         self.vision_config = vision_config
         self.vision_embeddings = CLIPVisionEmbeddings(vision_config)
         self.vision_pre_layrnorm = nn.LayerNorm(vision_config.hidden_size)
         self.vision_post_layernorm = nn.LayerNorm(vision_config.hidden_size)
 
-        self.visual_prompt = VisualPrompt(prompt_size, vision_config.image_size)  # 
-        # text model
+        # Visual prompt integration with Neural Prior
+        self.visual_prompt = VisualPrompt(prompt_size, vision_config.image_size)
+
+        # Text model setup
         self.text_config = text_config
         self.text_embeddings = BertEmbeddings(text_config)
         self.text_pooler = BertPooler(text_config) if add_pooling_layer else None
 
-        # all
+        # Encoder combining vision and text
         self.encoder = UnimoEncoder(vision_config, text_config)
 
         self.device = vision_config.device
@@ -807,8 +835,8 @@ class UnimoModel(nn.Module):
         #print("Inside forward of UnimoModel of modelling_unimo")
         # pre vision
         pixel_values = self.visual_prompt(pixel_values)
-        # rcnn_values = self.visual_prompt(rcnn_values)
-        # aux_values = self.visual_prompt(aux_values)
+
+        # Vision embeddings
         vision_embedding_output = self.vision_embeddings(pixel_values, aux_values, rcnn_values)
         vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
 
@@ -850,31 +878,49 @@ class UnimoModel(nn.Module):
         pooled_output = self.text_pooler(sequence_output) if self.text_pooler is not None else None
 
         kl_loss = None
+        vision_hidden_states = encoder_outputs.hidden_states  # all_vision_hidden_states
+        if isinstance(vision_hidden_states, tuple):
+            # Average all hidden states from all layers if available
+            averaged_hidden_states = torch.mean(torch.stack(vision_hidden_states), dim=0)
+        else:
+            # Or simply use the last hidden state
+            averaged_hidden_states = vision_hidden_states
+        
+        cls_token_position = (0, 0)  # You can set this to other positions
+        gaussian_target_map = create_gaussian_target_map(
+            cls_token_position, 
+            hidden_size=averaged_hidden_states.size(-1), 
+            seq_length=averaged_hidden_states.size(1)
+        )
         if prompt_loss:
-        #     # Extract attention weights from vision encoder
-            v_hidden_states = encoder_outputs.hidden_states[-1].detach().clone()
-            _, h , w = v_hidden_states.shape
-        #     # Get patch position and create target Gaussian map
-            patch_position = (self.visual_prompt.prompt_size // 2, self.visual_prompt.prompt_size // 2)
-            target_map = create_gaussian_target_map(patch_position, self.vision_config.hidden_size, seq_length)
-            v_hidden_states = v_hidden_states.mean(dim=1)
-            target_map = target_map.to(v_hidden_states.device)
-            # print("Hidden state shape = ",v_hidden_states.shape )
-            # target_map = target_map.unsqueeze(1).repeat(1, h, 1)
-            # print("Target shape = ",target_map.shape)
-        #     # Compute KL loss
-            kl_loss = compute_kl_loss(v_hidden_states, target_map)
+            kl_div_loss = compute_kl_loss(averaged_hidden_states, gaussian_target_map)
+        else:
+            kl_div_loss = 0  # If not applying the visual prompt loss
+        # if prompt_loss:
+        # #     # Extract attention weights from vision encoder
+        #     v_hidden_states = encoder_outputs.hidden_states[-1].detach().clone()
+        #     _, h , w = v_hidden_states.shape
+        # #     # Get patch position and create target Gaussian map
+        #     patch_position = (self.visual_prompt.prompt_size // 2, self.visual_prompt.prompt_size // 2)
+        #     target_map = create_gaussian_target_map(patch_position, self.vision_config.hidden_size, seq_length)
+        #     v_hidden_states = v_hidden_states.mean(dim=1)
+        #     target_map = target_map.to(v_hidden_states.device)
+        #     # print("Hidden state shape = ",v_hidden_states.shape )
+        #     # target_map = target_map.unsqueeze(1).repeat(1, h, 1)
+        #     # print("Target shape = ",target_map.shape)
+        # #     # Compute KL loss
+        #     kl_loss = compute_kl_loss(v_hidden_states, target_map)
 
         if not return_dict:
             print("inside not reutrn dict")
-            return (kl_loss,sequence_output, pooled_output) + encoder_outputs[1:]
+            return (kl_div_loss,sequence_output, pooled_output) + encoder_outputs[1:]
         
         # if not return_dict:
         #     #print("Exiting forward of UnimoModel of modelling_unimo")
         #     return (sequence_output, pooled_output) + encoder_outputs[1:]
         #print("Exiting forward of UnimoModel of modelling_unimo")
         
-        return (kl_loss,BaseModelOutputWithPoolingAndCrossAttentions(
+        return (kl_div_loss,BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
             hidden_states=encoder_outputs.hidden_states,
