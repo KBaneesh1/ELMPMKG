@@ -1,0 +1,23 @@
+The image encoder is essential for converting unprocessed image inputs into organized, high-dimensional representations that can be combined with modalities like text. The image encoder utilizes a Transformer-based method which is influenced by the Vision Transformer (ViT).It analyzes images as a series of patches instead of handling them as pixel grids, enabling enhanced adaptability in capturing contextual and semantic details from images. Besides fundamental patch embeddings, we have incorporated Visual Prompting for the images to direct the attention of the Vision Transformers towards significant areas of the images. Furthermore, the encoder is supplemented with auxiliary features and RCNN embeddings to improve its representational effectiveness. 
+
+\begin{itemize}
+   
+   \item  Input Processing and Patch Embedding
+The image encoder begins by dividing each image into smaller, fixed-size patches. Instead of processing the entire image at once (as is common in traditional CNNs), each image is split into 
+P×P patches. This strategy is inspired by the Transformers paradigm, which treats sequential data like language as tokenized inputs. Similarly, in our image encoder, patches of the image act as “tokens,” which are embedded into a higher-dimensional space.By embedding patches, the model captures local spatial relationships within the image, allowing it to focus on small regions and details.
+
+\item Positional Embeddings :
+While the Transformer architecture is highly powerful in modeling relationships between tokens (or patches, in this case), it lacks an inherent understanding of the relative positions of those tokens. To address this, we introduce positional embeddings, which encode the spatial position of each patch within the image.
+
+These positional embeddings are crucial for maintaining the spatial integrity of the image and allowing the model to understand the relative positioning of various objects and regions in the image. Without these embeddings, the model would treat each patch as an independent unit, lacking the context of how it fits within the larger image structure.
+
+\item Auxillary and RCNN Feature Integration 
+
+Auxiliary Features: These are typically cropped portions of the image or extracted feature maps from a CNN that highlight important regions or substructures in the image. Integrating these auxiliary features ensures that the model pays more attention to visually important areas, such as objects or regions of interest, which might be crucial for tasks like object detection or segmentation.
+
+RCNN Embeddings: RCNN (Region-based CNN) embeddings represent regions within the image that are likely to contain objects. By incorporating RCNN embeddings into the image encoder, the model gains object-level awareness, allowing it to learn object-specific features in a more structured way.
+
+\
+
+\item Incorporation of Visual Prompt: In recent years, visual prompting has emerged as a technique to adapt large vision models, like pre-trained vision transformers, to new tasks by embedding additional, task-relevant visual information directly into input images
+ Visual prompting offers a flexible way to condition model behavior without extensive retraining, allowing researchers and practitioners to guide a model’s attention toward specific regions or contextual cues in the image. This is especially useful in adapting foundation models to specific applications where conventional fine-tuning might be costly or infeasible.
