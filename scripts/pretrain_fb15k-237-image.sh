@@ -1,4 +1,4 @@
-python main.py --gpus "0," --max_epochs=15  --num_workers=4 --checkpoints=crossAttentionTrain.ckpt\
+python main.py --gpus "0," --max_epochs=15  --num_workers=4 --checkpoint=crossAttentionTrain.ckpt\
    --model_name_or_path  bert-base-uncased \
    --accumulate_grad_batches 1 \
    --model_class UnimoKGC \
